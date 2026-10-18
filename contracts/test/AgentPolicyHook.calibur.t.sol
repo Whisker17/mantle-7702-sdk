@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IAccountExecute} from "account-abstraction/interfaces/IAccountExecute.sol";
-import {CaliburEntry} from "calibur/CaliburEntry.sol";
+import {ICalibur} from "calibur/interfaces/ICalibur.sol";
 import {IKeyManagement} from "calibur/interfaces/IKeyManagement.sol";
 import {PackedUserOperation} from "calibur/interfaces/IValidationHook.sol";
 import {BatchedCall} from "calibur/libraries/BatchedCallLib.sol";
@@ -12,13 +12,22 @@ import {Key, KeyType} from "calibur/libraries/KeyLib.sol";
 import {Settings} from "calibur/libraries/SettingsLib.sol";
 import {SignedBatchedCall, SignedBatchedCallLib} from "calibur/libraries/SignedBatchedCallLib.sol";
 import {Static} from "calibur/libraries/Static.sol";
-import {IAgentPolicyHook} from "../src/interfaces/IAgentPolicyHook.sol";
+import {
+    CallPermission,
+    IAgentPolicyHook,
+    Policy,
+    QuoteLimit,
+    RuleKind
+} from "../src/interfaces/IAgentPolicyHook.sol";
+import {MockLaunchpad} from "../src/mocks/MockLaunchpad.sol";
+import {MockUSD} from "../src/mocks/MockUSD.sol";
 import {ILaunchpad} from "../src/interfaces/ILaunchpad.sol";
 import {AgentPolicyHookTestBase} from "./hook/AgentPolicyHookTestBase.sol";
 
 /// @notice Smoke test through a real CaliburEntry v1.1.0 delegated from an EOA: confirms the hook
 ///         callback signatures, `msg.sender` = account, and the hook rules on the direct, ERC-7821,
-///         SignedBatchedCall and validateUserOp entries. The full entry-point matrix is out of scope.
+///         SignedBatchedCall and validateUserOp entries, and with the acceptance-fixture mocks.
+///         The full entry-point matrix is out of scope.
 contract AgentPolicyHookCaliburTest is AgentPolicyHookTestBase {
     uint256 internal constant ROOT_PK = 0xA11CE;
     uint256 internal constant AGENT_PK = 0xA6E47;
@@ -26,31 +35,35 @@ contract AgentPolicyHookCaliburTest is AgentPolicyHookTestBase {
     address internal agent;
     address internal relayer = makeAddr("relayer");
     bytes32 internal keyHash;
-    CaliburEntry internal account;
+    ICalibur internal account;
 
     function setUp() public override {
         super.setUp();
         root = vm.addr(ROOT_PK);
         agent = vm.addr(AGENT_PK);
-        CaliburEntry impl = new CaliburEntry();
-        vm.etch(root, bytes.concat(hex"ef0100", abi.encodePacked(address(impl))));
-        account = CaliburEntry(payable(root));
+        address impl = deployCode("CaliburEntry.sol:CaliburEntry");
+        vm.etch(root, bytes.concat(hex"ef0100", abi.encodePacked(impl)));
+        account = ICalibur(root);
         usd.mint(root, 10_000e18);
 
-        Key memory key = Key(KeyType.Secp256k1, abi.encode(agent));
-        keyHash = keccak256(abi.encode(key.keyType, keccak256(key.publicKey)));
+        keyHash = _grantKey(agent, defaultPolicy());
+        assertTrue(hook.getSummary(keyHash, root).active);
+    }
+
+    /// @dev Root batch: register the secp256k1 key, attach the hook with a 1-day expiry, set
+    ///      its policy.
+    function _grantKey(address signer, Policy memory policy) internal returns (bytes32 kh) {
+        Key memory key = Key(KeyType.Secp256k1, abi.encode(signer));
+        kh = keccak256(abi.encode(key.keyType, keccak256(key.publicKey)));
         uint256 expiry = block.timestamp + 1 days;
         Settings settings = Settings.wrap(uint256(uint160(address(hook))) | (expiry << 160));
 
         Call[] memory calls = new Call[](3);
         calls[0] = Call(root, 0, abi.encodeCall(IKeyManagement.register, (key)));
-        calls[1] = Call(root, 0, abi.encodeCall(IKeyManagement.update, (keyHash, settings)));
-        calls[2] = Call(
-            address(hook), 0, abi.encodeCall(IAgentPolicyHook.setPolicy, (keyHash, defaultPolicy()))
-        );
+        calls[1] = Call(root, 0, abi.encodeCall(IKeyManagement.update, (kh, settings)));
+        calls[2] = Call(address(hook), 0, abi.encodeCall(IAgentPolicyHook.setPolicy, (kh, policy)));
         vm.prank(root);
         account.execute(BatchedCall(calls, true));
-        assertTrue(hook.getSummary(keyHash, root).active);
     }
 
     function _agentExec(Call[] memory calls, bool revertOnFailure) internal {
@@ -188,5 +201,59 @@ contract AgentPolicyHookCaliburTest is AgentPolicyHookTestBase {
             BatchedCall(_one(address(usd), abi.encodeCall(IERC20.transfer, (bob, 5_000e18))), true)
         );
         assertEq(usd.balanceOf(bob), 5_000e18);
+    }
+
+    /// @notice The acceptance fixture (MockUSD, MockLaunchpad, MemeToken) through Calibur.
+    function test_acceptanceFixture_realMocks_approveBuySell() public {
+        MockUSD musd = new MockUSD();
+        MockLaunchpad lp = new MockLaunchpad(address(musd));
+        address token = lp.createToken("Meme", "MEME");
+        assertEq(MockLaunchpad.buy.selector, hook.BUY_SELECTOR());
+        assertEq(MockLaunchpad.sell.selector, hook.SELL_SELECTOR());
+        musd.mint(root, 1_000e6);
+
+        Policy memory p;
+        p.quoteLimits = new QuoteLimit[](1);
+        p.quoteLimits[0] = QuoteLimit(address(musd), 100e6, 50e6);
+        p.periodLength = DAY;
+        p.permissions = new CallPermission[](3);
+        p.permissions[0] =
+            CallPermission(address(musd), IERC20.approve.selector, RuleKind.ERC20_APPROVE);
+        p.permissions[1] =
+            CallPermission(address(lp), MockLaunchpad.buy.selector, RuleKind.LAUNCHPAD_BUY);
+        p.permissions[2] =
+            CallPermission(address(lp), MockLaunchpad.sell.selector, RuleKind.LAUNCHPAD_SELL);
+        p.trustedSpenders = new address[](1);
+        p.trustedSpenders[0] = address(lp);
+        p.maxDeadlineWindow = 120;
+        address agent2 = makeAddr("agent2");
+        bytes32 kh = _grantKey(agent2, p);
+
+        Call[] memory calls = new Call[](2);
+        calls[0] = Call(address(musd), 0, abi.encodeCall(IERC20.approve, (address(lp), 10e6)));
+        calls[1] = Call(
+            address(lp), 0, abi.encodeCall(lp.buy, (token, 10e6, 0, block.timestamp + 60, root))
+        );
+        vm.prank(agent2);
+        account.execute(BatchedCall(calls, true));
+        uint256 bought = 10e6 * lp.RATE();
+        assertEq(hook.inventory(kh, root, token), bought);
+        assertEq(hook.getSpent(kh, root, address(musd)).total, 10e6);
+
+        Call[] memory over = _one(
+            address(lp), abi.encodeCall(lp.sell, (token, bought + 1, 0, block.timestamp, root))
+        );
+        vm.prank(agent2);
+        vm.expectRevert(
+            abi.encodeWithSelector(IAgentPolicyHook.InventoryExceeded.selector, token, bought)
+        );
+        account.execute(BatchedCall(over, true));
+
+        Call[] memory ok =
+            _one(address(lp), abi.encodeCall(lp.sell, (token, bought, 0, block.timestamp, root)));
+        vm.prank(agent2);
+        account.execute(BatchedCall(ok, true));
+        assertEq(hook.inventory(kh, root, token), 0);
+        assertEq(musd.balanceOf(root), 1_000e6);
     }
 }
