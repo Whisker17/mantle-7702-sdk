@@ -305,10 +305,12 @@ contract MockLaunchpadTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, attacker, 0, 1)
         );
+        // forge-lint: disable-next-line(erc20-unchecked-transfer) -- expected to revert
         usd.transferFrom(victim, attacker, 1);
         vm.expectRevert(
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, attacker, 0, 1)
         );
+        // forge-lint: disable-next-line(erc20-unchecked-transfer) -- expected to revert
         meme.transferFrom(victim, attacker, 1);
 
         assertTrue(usd.approve(victim, 1));

@@ -91,6 +91,7 @@ contract MockLaunchpad {
 
     function _check(address token, uint256 deadline) private view {
         if (!isRegistered[token]) revert UnregisteredToken();
+        // forge-lint: disable-next-line(block-timestamp) -- a deadline is part of the ABI
         if (block.timestamp > deadline) revert Expired();
     }
 }
