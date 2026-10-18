@@ -538,10 +538,12 @@ business requests cannot consume; a hook for per-project sponsorship is reserved
 - 4337: `(verificationGasLimit + callGasLimit + paymasterVerificationGasLimit +
   paymasterPostOpGasLimit + preVerificationGas) × maxFeePerGas` (matches EP v0.8
   `_getRequiredPrefund`).
-- Relayer: `gasLimit × maxFeePerGas + an upper bound on the Mantle L1 data fee`. The spike
-  confirms how the L1 fee is computed; until then a conservative factor is for tests only
-  and is not a strict budget guarantee; when no upper bound can be established, requests
-  outside verified scenarios are rejected.
+- Relayer (measured, `docs/infra.md` §5): `gasLimit × (maxFeePerGas + operatorFeeScalar ×
+  100) + operatorFeeConstant + tokenRatio × GasPriceOracle.getL1FeeUpperBound(unsigned tx
+  size)`, with the oracle's scalars read at reservation time. Settlement charges what the
+  receipt says the sender paid: `gasUsed × effectiveGasPrice + l1Fee + gasUsed ×
+  operatorFeeScalar × 100 + operatorFeeConstant` (matched to the wei). When the oracle cannot
+  be read, the request is rejected.
 
 **Ledger state machine** (SQLite): `authenticate → decode / simulate → transactionally
 reserve the worst-case fee → submit / sign → settle on chain (failed transactions are

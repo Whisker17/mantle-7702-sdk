@@ -27,6 +27,7 @@ export const testConfig = (over: Partial<SponsorConfig["policy"]> = {}): Sponsor
   listen: { host: "127.0.0.1", port: 0 },
   database: ":memory:",
   relayer: RELAYER_ADDRESS,
+  settleTimeoutSeconds: 30,
   addresses: book,
   maxRequestValiditySeconds: 300,
   policy: {
@@ -76,6 +77,8 @@ export interface RequestOptions {
     validUntil: number;
   }>;
   now?: number;
+  /** Unix seconds; default `now + 120`. */
+  deadline?: bigint;
 }
 
 export const nowSeconds = () => Math.floor(Date.now() / 1000);
@@ -92,7 +95,7 @@ export async function relayRequest(o: RequestOptions) {
     calls: o.calls ?? [{ to: o.account, value: 0n, data: "0x" }],
     nonce: o.nonce ?? laneOf(o.keyHash) << 64n,
     executor: o.executor ?? RELAYER_ADDRESS,
-    deadline: BigInt(now + 120),
+    deadline: o.deadline ?? BigInt(now + 120),
   });
   return signRelayRequest(o.requestSigner ?? o.signer, {
     sender: o.account,

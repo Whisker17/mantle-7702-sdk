@@ -1,12 +1,25 @@
 import {
+  caliburAbi,
+  caliburDomain,
   ERC20ETH,
   laneOf,
   PrivateKeySigner,
   type RelayRequest,
   SponsorRejectCode,
   secp256k1KeyHash,
+  signedBatchedCallTypes,
+  signRelayRequest,
 } from "@mantle-aa/sdk";
-import { type Address, encodeFunctionData, type Hex, parseAbi, zeroAddress, zeroHash } from "viem";
+import {
+  type Address,
+  encodeAbiParameters,
+  encodeFunctionData,
+  type Hex,
+  hashTypedData,
+  parseAbi,
+  zeroAddress,
+  zeroHash,
+} from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { describe, expect, it } from "vitest";
 import { decodeRelay, SponsorRejection, verifyOnChain } from "../src/auth.js";
@@ -162,8 +175,53 @@ describe("decodeRelay", () => {
     expect((await rejection(decode(await build()))).reason).toBe(reason);
   });
 
-  it("accepts a batch any executor may relay", async () => {
-    await expect(decode(await make({ ...SESSION, executor: zeroAddress }))).resolves.toBeDefined();
+  it("rejects a batch any executor may relay (executor 0), root or session", async () => {
+    const session = await rejection(decode(await make({ ...SESSION, executor: zeroAddress })));
+    expect(session.reason).toBe(SponsorRejectCode.WRONG_EXECUTOR);
+    // The SDK refuses to sign a root batch without an executor; another client might not.
+    const message = {
+      batchedCall: {
+        calls: [{ to: root.address, value: 0n, data: "0x" as Hex }],
+        revertOnFailure: true,
+      },
+      nonce: 0n,
+      keyHash: zeroHash,
+      executor: zeroAddress,
+      deadline: BigInt(nowSeconds() + 120),
+    };
+    const signature = await root.signTypedData({
+      domain: caliburDomain({
+        chainId: 5003,
+        account: root.address,
+        implementation: book.caliburEntry,
+      }),
+      types: signedBatchedCallTypes,
+      primaryType: "SignedBatchedCall",
+      message,
+    });
+    const data = encodeFunctionData({
+      abi: caliburAbi,
+      functionName: "execute",
+      args: [
+        message,
+        encodeAbiParameters([{ type: "bytes" }, { type: "bytes" }], [signature, "0x"]),
+      ],
+    });
+    const valid = await make(ROOT);
+    const request = await signRelayRequest(root, { sender: root.address, data, auth: valid.auth });
+    expect((await rejection(decode(request))).reason).toBe(SponsorRejectCode.WRONG_EXECUTOR);
+  });
+
+  it("authenticates without a validity window, so a retry can find its issued result", async () => {
+    const expired = await make({ ...ROOT, auth: { validAfter: 1, validUntil: nowSeconds() - 1 } });
+    await expect(decodeRelay(expired, config)).resolves.toMatchObject({ sender: root.address });
+    const forged = {
+      ...expired,
+      auth: { ...expired.auth, signature: (await make(SESSION)).auth.signature },
+    };
+    expect((await rejection(decodeRelay(forged, config))).reason).toBe(
+      SponsorRejectCode.BAD_REQUEST_SIGNATURE,
+    );
   });
 
   it("rejects calldata that is not a canonical execute(SignedBatchedCall, bytes)", async () => {
@@ -182,7 +240,20 @@ describe("decodeRelay", () => {
 describe("verifyOnChain on an undelegated account", () => {
   it("accepts the root's init: authorization to CaliburEntry and a batch signed by the SDK", async () => {
     const relay = await decode(await make({ ...ROOT, authorization: await authorization() }));
-    await expect(verifyOnChain(client, config, relay)).resolves.toBeUndefined();
+    // It resolves to the batch digest Calibur checks the signature against.
+    const domain = caliburDomain({
+      chainId: 5003,
+      account: root.address,
+      implementation: book.caliburEntry,
+    });
+    await expect(verifyOnChain(client, config, relay)).resolves.toBe(
+      hashTypedData({
+        domain,
+        types: signedBatchedCallTypes,
+        primaryType: "SignedBatchedCall",
+        message: relay.signedBatchedCall,
+      }),
+    );
   });
 
   it("rejects a root request without an authorization", async () => {

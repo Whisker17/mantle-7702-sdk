@@ -13,6 +13,9 @@ import { parse } from "yaml";
  * listen: { host: 127.0.0.1, port: 8548 }
  * database: ./sponsor.sqlite          # relative paths resolve against this file
  * relayer: "0x…"                      # the relayer (batch executor) address; names this sponsor
+ * relayerKey: ${SPONSOR_RELAYER_KEY}  # optional; the relayer's private key, only as ${VAR}: without
+ *                                     # one the sponsor decides but cannot submit
+ * settleTimeoutSeconds: 30            # optional; how long sponsor_relay waits for settlement
  * deployments: ../deployments/mantle-sepolia.json   # optional; default: the committed book
  * maxRequestValiditySeconds: 300      # optional; longest request validity window accepted
  * policy:
@@ -31,6 +34,10 @@ export interface SponsorConfig {
   listen: { host: string; port: number };
   database: string;
   relayer: Address;
+  /** The environment variable holding the relayer's private key; the key itself is never kept here. */
+  relayerKeyEnv?: string;
+  /** How long `sponsor_relay` waits for its transaction to settle before answering `pending`. */
+  settleTimeoutSeconds: number;
   addresses: AddressBook;
   maxRequestValiditySeconds: number;
   policy: SponsorPolicy;
@@ -59,6 +66,8 @@ export function parseConfig(raw: unknown, baseDir: string): SponsorConfig {
     "listen",
     "database",
     "relayer",
+    "relayerKey",
+    "settleTimeoutSeconds",
     "deployments",
     "maxRequestValiditySeconds",
     "policy",
@@ -100,6 +109,11 @@ export function parseConfig(raw: unknown, baseDir: string): SponsorConfig {
     },
     database: resolve(baseDir, string(c.database, "database")),
     relayer: address(c.relayer, "relayer"),
+    ...(c.relayerKey === undefined ? {} : { relayerKeyEnv: envName(c.relayerKey) }),
+    settleTimeoutSeconds:
+      c.settleTimeoutSeconds === undefined
+        ? 30
+        : integer(c.settleTimeoutSeconds, "settleTimeoutSeconds"),
     addresses,
     maxRequestValiditySeconds:
       c.maxRequestValiditySeconds === undefined
@@ -142,6 +156,16 @@ function mnt(value: unknown, field: string): bigint {
     throw new Error(`${field} must be a quoted decimal MNT amount`);
   }
   return parseEther(value);
+}
+
+/** A private key is never written into the file: only `${VAR}` naming the variable that holds it. */
+function envName(value: unknown): string {
+  const env = typeof value === "string" ? /^\$\{(\w+)\}$/.exec(value)?.[1] : undefined;
+  if (!env)
+    throw new Error(
+      "relayerKey must reference the environment variable holding the key, not be a key",
+    );
+  return env;
 }
 
 /** Never echoes the URL: it may carry credentials. */

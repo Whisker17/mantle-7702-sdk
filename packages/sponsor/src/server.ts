@@ -2,12 +2,21 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import {
   parseRelayRequest,
+  type RelayRequest,
+  type RelayResult,
   SPONSOR_REJECTED_RPC_CODE,
   SPONSOR_RELAY_METHOD,
   SponsorRejectCode,
 } from "@mantle-aa/sdk";
-import type { Client } from "viem";
-import { type DecodedRelay, decodeRelay, reject, SponsorRejection, verifyOnChain } from "./auth.js";
+import type { Client, Hex } from "viem";
+import {
+  checkValidity,
+  type DecodedRelay,
+  decodeRelay,
+  reject,
+  SponsorRejection,
+  verifyOnChain,
+} from "./auth.js";
 import type { SponsorConfig } from "./config.js";
 import {
   checkAllowlist,
@@ -20,6 +29,8 @@ import { type BudgetClass, dayOf, type SponsorStore } from "./store.js";
 
 /** A request the sponsor has authenticated, decoded, simulated and decided to pay for. */
 export interface RelayDecision extends DecodedRelay {
+  /** The SignedBatchedCall's EIP-712 digest. */
+  batchDigest: Hex;
   budgetClass: BudgetClass;
   /** The UTC day whose counters the request is checked (and is to be charged) against. */
   day: number;
@@ -34,7 +45,22 @@ export interface SponsorContext {
   now?: () => number;
 }
 
+/** Pays for accepted requests: the ledger (`Ledger`). */
+export interface RelaySubmitter {
+  /** The result of a request digest issued before, or undefined. */
+  find(digest: Hex): Promise<RelayResult> | undefined;
+  relay(decision: RelayDecision): Promise<RelayResult>;
+}
+
 const clock = () => Math.floor(Date.now() / 1000);
+
+function parse(params: unknown): RelayRequest {
+  try {
+    return parseRelayRequest(params);
+  } catch (error) {
+    return reject(SponsorRejectCode.INVALID_PARAMS, (error as Error).message);
+  }
+}
 
 /**
  * The `sponsor_relay` pipeline up to the sponsorship decision: parse → domain, validity, decode,
@@ -43,16 +69,39 @@ const clock = () => Math.floor(Date.now() / 1000);
  * Throws `SponsorRejection` on the first failed check.
  */
 export async function authorizeRelay(ctx: SponsorContext, params: unknown): Promise<RelayDecision> {
-  let request: ReturnType<typeof parseRelayRequest>;
-  try {
-    request = parseRelayRequest(params);
-  } catch (error) {
-    return reject(SponsorRejectCode.INVALID_PARAMS, (error as Error).message);
-  }
   const now = (ctx.now ?? clock)();
-  const relay = await decodeRelay(request, ctx.config, now);
+  return decide(ctx, await decodeRelay(parse(params), ctx.config, now), now);
+}
+
+/**
+ * `sponsor_relay` end to end: authenticate the request; return the recorded result if its digest
+ * was issued before (whatever its validity now, so no retry extends it); otherwise decide as
+ * `authorizeRelay` does and pay through the ledger. Throws `SponsorRejection`.
+ */
+export async function sponsorRelay(
+  ctx: SponsorContext & { ledger?: RelaySubmitter | undefined },
+  params: unknown,
+): Promise<RelayResult> {
+  const relay = await decodeRelay(parse(params), ctx.config);
+  const issued = ctx.ledger?.find(relay.digest);
+  if (issued) return issued;
+  const now = (ctx.now ?? clock)();
+  checkValidity(relay.request.auth, ctx.config, now);
+  const decision = await decide(ctx, relay, now);
+  if (!ctx.ledger) {
+    return reject(SponsorRejectCode.SUBMISSION_UNAVAILABLE, "this sponsor has no relayer");
+  }
+  return ctx.ledger.relay(decision);
+}
+
+async function decide(
+  ctx: SponsorContext,
+  relay: DecodedRelay,
+  now: number,
+): Promise<RelayDecision> {
+  const request = relay.request;
   checkAllowlist(ctx.config, relay.sender);
-  await verifyOnChain(ctx.client, ctx.config, relay);
+  const batchDigest = await verifyOnChain(ctx.client, ctx.config, relay);
   const budgetClass = classify(relay.signedBatchedCall, relay.sender, ctx.config);
   const tx = await simulate(ctx.client, ctx.config, {
     to: relay.sender,
@@ -61,12 +110,12 @@ export async function authorizeRelay(ctx: SponsorContext, params: unknown): Prom
   });
   const day = dayOf(now);
   checkBudget(ctx.config, ctx.store.usage(day, relay.sender), { budgetClass, ...tx });
-  return { ...relay, budgetClass, day, tx };
+  return { ...relay, batchDigest, budgetClass, day, tx };
 }
 
 export interface SponsorServerOptions extends SponsorContext {
-  /** Pays for an accepted request (reservation, submission, settlement). */
-  submit?: (decision: RelayDecision) => Promise<unknown>;
+  /** Pays for accepted requests; without one they are refused `SUBMISSION_UNAVAILABLE`. */
+  ledger?: RelaySubmitter;
 }
 
 const MAX_BODY_BYTES = 1 << 20;
@@ -79,11 +128,7 @@ export function createSponsorServer(options: SponsorServerOptions) {
     if (!Array.isArray(params) || params.length !== 1) {
       return reject(SponsorRejectCode.INVALID_PARAMS, "params must be [request]");
     }
-    const decision = await authorizeRelay(options, params[0]);
-    if (!options.submit) {
-      return reject(SponsorRejectCode.SUBMISSION_UNAVAILABLE, "this sponsor has no relayer");
-    }
-    return options.submit(decision);
+    return sponsorRelay(options, params[0]);
   }
 
   async function rpc(body: string): Promise<object> {
