@@ -8,6 +8,8 @@ import { loadRelayerAccount } from "./relayer.js";
 export const EMBEDDED_SWITCH_ENV = "MANTLE_AA_EMBEDDED_RELAYER";
 /** The default environment variable holding the embedded relayer's private key. */
 export const EMBEDDED_RELAYER_KEY_ENV = "MANTLE_AA_RELAYER_KEY";
+/** The default environment variable holding the paymaster signer's private key, if any. */
+export const EMBEDDED_PAYMASTER_SIGNER_KEY_ENV = "MANTLE_AA_PAYMASTER_SIGNER_KEY";
 
 /**
  * Test- and demo-sized caps. The per-request cap leaves room for init with the first grant, whose
@@ -27,6 +29,11 @@ export interface EmbeddedSponsorOptions {
   allowlist: readonly Address[];
   /** The environment variable holding the relayer's private key; default `MANTLE_AA_RELAYER_KEY`. */
   relayerKeyEnv?: string;
+  /**
+   * The environment variable holding the paymaster signer's private key, which enables the `pm_*`
+   * methods; default `MANTLE_AA_PAYMASTER_SIGNER_KEY` when that variable is set.
+   */
+  paymasterSignerKeyEnv?: string;
   /** SQLite path; default `:memory:` (the ledger lives as long as the process). */
   database?: string;
   /** Overrides `EMBEDDED_POLICY_DEFAULTS`. */
@@ -44,9 +51,10 @@ export interface EmbeddedSponsorOptions {
 /**
  * Embedded mode (docs/DESIGN.md §5.2; tests and local demos only): the sponsor service itself —
  * the same authentication, policy, ledger and relayer submission — started in process on an
- * ephemeral loopback port and paying with a local relayer key from the environment. Hand `url` to
- * `RelayerExecutor`. Refuses to start unless `MANTLE_AA_EMBEDDED_RELAYER=1`. `close` leaves no
- * listener, timer or open database behind.
+ * ephemeral loopback port and paying with a local relayer key from the environment (and, given a
+ * paymaster signer key, signing UserOps for the `pm_*` methods). Hand `url` to `RelayerExecutor`
+ * or use it as the ERC-7677 paymaster service. Refuses to start unless
+ * `MANTLE_AA_EMBEDDED_RELAYER=1`. `close` leaves no listener, timer or open database behind.
  */
 export async function startEmbeddedSponsor(options: EmbeddedSponsorOptions) {
   const env = options.env ?? process.env;
@@ -56,6 +64,9 @@ export async function startEmbeddedSponsor(options: EmbeddedSponsorOptions) {
     );
   }
   const relayerKeyEnv = options.relayerKeyEnv ?? EMBEDDED_RELAYER_KEY_ENV;
+  const paymasterSignerKeyEnv =
+    options.paymasterSignerKeyEnv ??
+    (env[EMBEDDED_PAYMASTER_SIGNER_KEY_ENV] ? EMBEDDED_PAYMASTER_SIGNER_KEY_ENV : undefined);
   const addresses = options.addresses ?? loadDeployments();
   const config: SponsorConfig = {
     chainId: addresses.chainId,
@@ -64,6 +75,7 @@ export async function startEmbeddedSponsor(options: EmbeddedSponsorOptions) {
     database: options.database ?? ":memory:",
     relayer: loadRelayerAccount({ relayerKeyEnv }, env).address,
     relayerKeyEnv,
+    ...(paymasterSignerKeyEnv ? { paymasterSignerKeyEnv } : {}),
     settleTimeoutSeconds: options.settleTimeoutSeconds ?? 30,
     addresses,
     maxRequestValiditySeconds: 300,

@@ -67,6 +67,28 @@ export async function relayerFeeBound(
   return tx.gas * (tx.maxFeePerGas + scalar * 100n) + constant + tokenRatio * l1UpperBound;
 }
 
+/**
+ * The most a sponsored UserOp can cost the paymaster deposit, in wei (DESIGN §5.2): EntryPoint
+ * v0.8's required prefund, which caps the `actualGasCost` it charges (docs/infra.md §5: the deposit
+ * is charged exactly that; the L1 and operator fees fall on the bundler).
+ */
+export function userOpFeeBound(op: {
+  verificationGasLimit: bigint;
+  callGasLimit: bigint;
+  paymasterVerificationGasLimit: bigint;
+  paymasterPostOpGasLimit: bigint;
+  preVerificationGas: bigint;
+  maxFeePerGas: bigint;
+}): { gas: bigint; maxFee: bigint } {
+  const gas =
+    op.verificationGasLimit +
+    op.callGasLimit +
+    op.paymasterVerificationGasLimit +
+    op.paymasterPostOpGasLimit +
+    op.preVerificationGas;
+  return { gas, maxFee: gas * op.maxFeePerGas };
+}
+
 /** A transaction receipt as the node returns it (hex quantities), with Mantle's fee fields. */
 export interface RawReceipt {
   transactionHash: Hex;

@@ -23,6 +23,7 @@ import {
   type Hex,
   hashTypedData,
   recoverAddress,
+  type SignedAuthorization,
   size,
   zeroAddress,
 } from "viem";
@@ -70,7 +71,7 @@ const isKeySigner = (signer: Address, account: Address, keyHash: Hex) =>
 
 /** The request is valid at `now`, and not for longer than the sponsor allows. */
 export function checkValidity(
-  auth: RelayRequest["auth"],
+  auth: { validAfter: number; validUntil: number },
   config: SponsorConfig,
   now: number,
 ): void {
@@ -137,6 +138,23 @@ export async function decodeRelay(
 
   const keyHash = batch.keyHash;
   const lane = batch.nonce >> 64n;
+  checkLane(keyHash, lane);
+  if (getAddress(batch.executor) !== config.relayer) {
+    reject(SponsorRejectCode.WRONG_EXECUTOR, `batch executor ${batch.executor}`);
+  }
+
+  const digest = relayRequestDigest(request);
+  checkRequestSigner(
+    await recoverRelayRequestSigner(request, digest).catch(() => zeroAddress),
+    sender,
+    keyHash,
+  );
+  await checkAuthorization(config, sender, keyHash, request.authorization);
+  return { request, digest, sender, keyHash, lane, signedBatchedCall: batch, data };
+}
+
+/** `(keyHash, nonce lane)` agreement (DESIGN §4.1): the root on lane 0, a session on its own lane. */
+export function checkLane(keyHash: Hex, lane: bigint): void {
   if (isRoot(keyHash)) {
     if (lane !== 0n) reject(SponsorRejectCode.WRONG_LANE, `root request on lane ${lane}`);
   } else if (lane === 0n) {
@@ -147,38 +165,41 @@ export async function decodeRelay(
       `lane ${lane} is not ${keyHash}'s lane ${laneOf(keyHash)}`,
     );
   }
-  if (getAddress(batch.executor) !== config.relayer) {
-    reject(SponsorRejectCode.WRONG_EXECUTOR, `batch executor ${batch.executor}`);
-  }
+}
 
-  const digest = relayRequestDigest(request);
-  const signer = await recoverRelayRequestSigner(request, digest).catch(() => zeroAddress);
+/** The request digest's signer (zero address if unrecoverable) is the root sender or the session key. */
+export function checkRequestSigner(signer: Address, sender: Address, keyHash: Hex): void {
   if (signer === zeroAddress || !isKeySigner(signer, sender, keyHash)) {
     reject(
       SponsorRejectCode.BAD_REQUEST_SIGNATURE,
       isRoot(keyHash) ? "not signed by the sender" : `not signed by session ${keyHash}`,
     );
   }
+}
 
-  const a = request.authorization;
-  if (a) {
-    if (!isRoot(keyHash)) {
-      reject(SponsorRejectCode.AUTHORIZATION_INVALID, "only a root request may carry one");
-    }
-    if (a.chainId !== config.chainId) {
-      reject(SponsorRejectCode.WRONG_CHAIN, `authorization chain ${a.chainId}`);
-    }
-    if (getAddress(a.address) !== config.addresses.caliburEntry) {
-      reject(SponsorRejectCode.AUTHORIZATION_INVALID, `delegates to ${a.address}`);
-    }
-    const authority = await recoverAuthorizationAddress({ authorization: a }).catch(
-      () => zeroAddress,
-    );
-    if (authority !== sender) {
-      reject(SponsorRejectCode.AUTHORIZATION_INVALID, "not signed by the sender");
-    }
+/** An authorization, if any: the root's only, on this chain, to CaliburEntry, signed by the sender. */
+export async function checkAuthorization(
+  config: SponsorConfig,
+  sender: Address,
+  keyHash: Hex,
+  a: SignedAuthorization | undefined,
+): Promise<void> {
+  if (!a) return;
+  if (!isRoot(keyHash)) {
+    reject(SponsorRejectCode.AUTHORIZATION_INVALID, "only a root request may carry one");
   }
-  return { request, digest, sender, keyHash, lane, signedBatchedCall: batch, data };
+  if (a.chainId !== config.chainId) {
+    reject(SponsorRejectCode.WRONG_CHAIN, `authorization chain ${a.chainId}`);
+  }
+  if (getAddress(a.address) !== config.addresses.caliburEntry) {
+    reject(SponsorRejectCode.AUTHORIZATION_INVALID, `delegates to ${a.address}`);
+  }
+  const authority = await recoverAuthorizationAddress({ authorization: a }).catch(
+    () => zeroAddress,
+  );
+  if (authority !== sender) {
+    reject(SponsorRejectCode.AUTHORIZATION_INVALID, "not signed by the sender");
+  }
 }
 
 /**
@@ -194,13 +215,48 @@ export async function verifyOnChain(
   relay: DecodedRelay,
 ): Promise<Hex> {
   const { sender, keyHash } = relay;
+  const delegated = await checkAccount(client, config, {
+    sender,
+    keyHash,
+    authorization: relay.request.authorization,
+  });
+  const domain = delegated
+    ? await readCaliburDomain(client, sender)
+    : caliburDomain({
+        chainId: config.chainId,
+        account: sender,
+        implementation: config.addresses.caliburEntry,
+      });
+  const batchDigest = hashTypedData({
+    domain,
+    types: signedBatchedCallTypes,
+    primaryType: "SignedBatchedCall",
+    message: relay.signedBatchedCall,
+  });
+  if (!isKeySigner(await batchSigner(batchDigest, relay), sender, keyHash)) {
+    reject(SponsorRejectCode.BAD_BATCH_SIGNATURE, `batch is not signed by ${keyHash}`);
+  }
+  return batchDigest;
+}
+
+/**
+ * The account and key checks of `verifyOnChain`, shared by every transport: the delegation (or
+ * the root's authorization and its nonce), and for a session the safe initialisation and the key
+ * (registered, a hooked non-admin key, unexpired, `summary.active`). Resolves to whether the
+ * account is delegated to CaliburEntry now.
+ */
+export async function checkAccount(
+  client: Client,
+  config: SponsorConfig,
+  request: { sender: Address; keyHash: Hex; authorization?: SignedAuthorization | undefined },
+): Promise<boolean> {
+  const { sender, keyHash, authorization } = request;
   const { caliburEntry, agentPolicyHook } = config.addresses;
   const read = <T>(address: Address, abi: unknown, functionName: string, args: unknown[]) =>
     readContract(client, { address, abi, functionName, args } as never) as Promise<T>;
 
   const code = (await getCode(client, { address: sender }))?.toLowerCase() ?? "0x";
   const delegated = code === delegationDesignator(caliburEntry);
-  const authorization = relay.request.authorization;
 
   if (isRoot(keyHash)) {
     if (!delegated && !authorization) {
@@ -245,20 +301,7 @@ export async function verifyOnChain(
       reject(SponsorRejectCode.KEY_INACTIVE, `${keyHash} is not active on the hook`);
     }
   }
-
-  const domain = delegated
-    ? await readCaliburDomain(client, sender)
-    : caliburDomain({ chainId: config.chainId, account: sender, implementation: caliburEntry });
-  const batchDigest = hashTypedData({
-    domain,
-    types: signedBatchedCallTypes,
-    primaryType: "SignedBatchedCall",
-    message: relay.signedBatchedCall,
-  });
-  if (!isKeySigner(await batchSigner(batchDigest, relay), sender, keyHash)) {
-    reject(SponsorRejectCode.BAD_BATCH_SIGNATURE, `batch is not signed by ${keyHash}`);
-  }
-  return batchDigest;
+  return delegated;
 }
 
 /** The signer of the batch as Calibur computes it (`hashTypedData(signedBatchedCall.hash())`). */
