@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main, "release/**"]
+  # Runs on the base branches too, so caches PRs restore from are saved there and the
+  # merged result is checked.
+  push:
+    branches: [dev, main, "release/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  typescript:
+    name: typescript
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+  contracts:
+    name: contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Detect Foundry project
+        id: detect
+        run: |
+          if [ -f contracts/foundry.toml ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        if: steps.detect.outputs.present == 'true'
+
+      - name: Format
+        if: steps.detect.outputs.present == 'true'
+        working-directory: contracts
+        run: forge fmt --check
+
+      - name: Build
+        if: steps.detect.outputs.present == 'true'
+        working-directory: contracts
+        run: forge build --sizes
+
+      - name: Test
+        if: steps.detect.outputs.present == 'true'
+        working-directory: contracts
+        run: forge test -vvv
