@@ -92,6 +92,11 @@ const EP = book.entryPoint;
 const PAYMASTER = book.verifyingPaymaster;
 const usd = (n: number) => BigInt(n) * 10n ** 6n;
 const UNIT = 10n ** 21n; // MockLaunchpad: 1 mUSD buys 1e21 meme units
+/**
+ * Per test: above the CLI's own 120 s bound on one bundler submission, so a UserOp that is never
+ * included fails with the CLI's error (and Alto's log) rather than a test timeout.
+ */
+const STEP_MS = 300_000;
 /** Meme the human holds before any session exists (bought for them by a third party). */
 const HUMAN_MEME = 7n * UNIT;
 
@@ -310,7 +315,10 @@ function bundlerRun(mode: Mode) {
     for (const secret of [PASSWORD, signerKey, relayerKey, checkRelayerKey]) {
       expect(output).not.toContain(secret.replace(/^0x/, ""));
     }
-    expect(result.code, `${args.join(" ")}: ${result.stdout}`).toBe(code);
+    // On a mismatch, Alto's recent log shows what the bundler did with the op.
+    const alto = () =>
+      result.code === code ? "" : `\n--- alto ---\n${stack.bundler.logs().slice(-8_000)}`;
+    expect(result.code, `${args.join(" ")}: ${result.stdout}${alto()}`).toBe(code);
     expect(result.json.ok).toBe(code === 0);
     return result;
   }
@@ -621,327 +629,389 @@ function bundlerRun(mode: Mode) {
     await stack?.stop();
   }, 60_000);
 
-  it("1. account init --grant: the root's init UserOp (eip7702Auth), gasless, → INITIALIZED", async () => {
-    expect((await s(["account", "status"], 0)).json.result.state).toBe("UNDELEGATED");
-    const r = await s(["account", "init", "--grant", policy, "--agent", "trader"], 0);
-    expect(r.json.result).toMatchObject({
-      account,
-      state: "INITIALIZED",
-      session: { profile: "trader" },
-    });
-    // A type-4 bundle; the paymaster hash covered the 2-byte 0x7702 initCode Alto packs.
-    await landed(r, "eip7702");
-    keyHash = readProfiles(keystore).trader?.keyHash as Hex;
-    trader = loadProfileSigner("trader", keystore);
-    expect((await s(["account", "status"], 0)).json.result.state).toBe("INITIALIZED");
-    await zeroMnt([account, trader.address]);
-    expect(await deposit(account)).toBe(0n);
+  it(
+    "1. account init --grant: the root's init UserOp (eip7702Auth), gasless, → INITIALIZED",
+    async () => {
+      expect((await s(["account", "status"], 0)).json.result.state).toBe("UNDELEGATED");
+      const r = await s(["account", "init", "--grant", policy, "--agent", "trader"], 0);
+      expect(r.json.result).toMatchObject({
+        account,
+        state: "INITIALIZED",
+        session: { profile: "trader" },
+      });
+      // A type-4 bundle; the paymaster hash covered the 2-byte 0x7702 initCode Alto packs.
+      await landed(r, "eip7702");
+      keyHash = readProfiles(keystore).trader?.keyHash as Hex;
+      trader = loadProfileSigner("trader", keystore);
+      expect((await s(["account", "status"], 0)).json.result.state).toBe("INITIALIZED");
+      await zeroMnt([account, trader.address]);
+      expect(await deposit(account)).toBe(0n);
 
-    // Principal is minted, never bought with MNT.
-    const hash = await attacker().writeContract({
-      address: USD,
-      abi: mockUsdAbi,
-      functionName: "mint",
-      args: [account, usd(200)],
-    });
-    await client.waitForTransactionReceipt({ hash, timeout: 30_000 });
-  }, 120_000);
+      // Principal is minted, never bought with MNT.
+      const hash = await attacker().writeContract({
+        address: USD,
+        abi: mockUsdAbi,
+        functionName: "mint",
+        args: [account, usd(200)],
+      });
+      await client.waitForTransactionReceipt({ hash, timeout: 30_000 });
+    },
+    STEP_MS,
+  );
 
-  it("2. agent exec: approve(MockUSD → launchpad, exact) + buy, a session UserOp through the deployed paymaster", async () => {
-    const r = await s(
-      [
-        "agent",
-        "exec",
-        "--agent",
-        "trader",
-        "--calls",
-        callsJson([approve(usd(10)), await trade("buy", usd(10))]),
-      ],
-      0,
-    );
-    expect(r.json.result.success).toBe(true);
-    await landed(r);
-    // Accepted through safe-mode validation: Alto traced it with its ERC-7562 collector.
-    expect(stack.bundler.logs()).toContain("tracerResult");
-    expect(await epNonce(laneOf(keyHash))).toBe((laneOf(keyHash) << 64n) | 1n);
-    expect(await balanceOf(USD)).toBe(usd(190));
-    expect(await balanceOf(MEME)).toBe(HUMAN_MEME + 10n * UNIT);
-    expect(await read("inventory", MEME)).toBe(10n * UNIT);
-    expect(await read("remainingLimit", USD)).toBe(usd(40));
-    expect(await allowance()).toBe(0n);
-    await zeroMnt([account, trader.address]);
-  }, 120_000);
+  it(
+    "2. agent exec: approve(MockUSD → launchpad, exact) + buy, a session UserOp through the deployed paymaster",
+    async () => {
+      const r = await s(
+        [
+          "agent",
+          "exec",
+          "--agent",
+          "trader",
+          "--calls",
+          callsJson([approve(usd(10)), await trade("buy", usd(10))]),
+        ],
+        0,
+      );
+      expect(r.json.result.success).toBe(true);
+      await landed(r);
+      // Accepted through safe-mode validation: Alto traced it with its ERC-7562 collector.
+      expect(stack.bundler.logs()).toContain("tracerResult");
+      expect(await epNonce(laneOf(keyHash))).toBe((laneOf(keyHash) << 64n) | 1n);
+      expect(await balanceOf(USD)).toBe(usd(190));
+      expect(await balanceOf(MEME)).toBe(HUMAN_MEME + 10n * UNIT);
+      expect(await read("inventory", MEME)).toBe(10n * UNIT);
+      expect(await read("remainingLimit", USD)).toBe(usd(40));
+      expect(await allowance()).toBe(0n);
+      await zeroMnt([account, trader.address]);
+    },
+    STEP_MS,
+  );
 
-  it("3. agent exec: sell(≤ inventory) returns MockUSD to the account", async () => {
-    const r = await s(
-      [
-        "agent",
-        "exec",
-        "--agent",
-        "trader",
-        "--calls",
-        callsJson([await trade("sell", 5n * UNIT)]),
-      ],
-      0,
-    );
-    expect(r.json.result.success).toBe(true);
-    await landed(r);
-    expect(await balanceOf(USD)).toBe(usd(195));
-    expect(await balanceOf(MEME)).toBe(HUMAN_MEME + 5n * UNIT);
-    expect(await read("inventory", MEME)).toBe(5n * UNIT);
-    // Inflows never restore the limit.
-    expect(await read("remainingLimit", USD)).toBe(usd(40));
-  }, 120_000);
+  it(
+    "3. agent exec: sell(≤ inventory) returns MockUSD to the account",
+    async () => {
+      const r = await s(
+        [
+          "agent",
+          "exec",
+          "--agent",
+          "trader",
+          "--calls",
+          callsJson([await trade("sell", 5n * UNIT)]),
+        ],
+        0,
+      );
+      expect(r.json.result.success).toBe(true);
+      await landed(r);
+      expect(await balanceOf(USD)).toBe(usd(195));
+      expect(await balanceOf(MEME)).toBe(HUMAN_MEME + 5n * UNIT);
+      expect(await read("inventory", MEME)).toBe(5n * UNIT);
+      // Inflows never restore the limit.
+      expect(await read("remainingLimit", USD)).toBe(usd(40));
+    },
+    STEP_MS,
+  );
 
-  it("6. account status / session list: state, keys, policy, remaining limits, inventory", async () => {
-    const status = (await s(["account", "status"], 0)).json.result;
-    expect(status).toMatchObject({ account, state: "INITIALIZED" });
-    expect(status.inventory).toEqual([
-      {
-        token: MEME,
-        balance: String(HUMAN_MEME + 5n * UNIT),
-        reserved: String(5n * UNIT),
-        unallocated: String(HUMAN_MEME),
-      },
-    ]);
-    const listed = (await s(["session", "list"], 0)).json.result;
-    expect(listed.sessions).toEqual(status.sessions);
-    expect(status.sessions).toHaveLength(1);
-    const [session] = status.sessions;
-    expect(session).toMatchObject({
-      keyHash: keyHash.toLowerCase(),
-      profile: "trader",
-      registered: true,
-      isAdmin: false,
-      hook: HOOK,
-      hooked: true,
-      summary: { initialized: true, active: true, revoked: false },
-      remaining: [{ token: USD, amount: String(usd(40)) }],
-      inventory: [{ token: MEME, amount: String(5n * UNIT) }],
-    });
-    // Calibur Settings carry the 24 h expiry.
-    expect(session.expiry - Math.floor(Date.now() / 1000)).toBeGreaterThan(86400 - 600);
-    expect(session.policy.quoteLimits).toEqual([
-      { token: USD, totalCap: String(usd(100)), periodCap: String(usd(50)) },
-    ]);
-    expect(session.policy.trustedSpenders).toEqual([PAD]);
-    expect(session.policy.permissions).toHaveLength(3);
-    expect(session.policy.maxDeadlineWindow).toBe(600);
-  }, 120_000);
+  it(
+    "6. account status / session list: state, keys, policy, remaining limits, inventory",
+    async () => {
+      const status = (await s(["account", "status"], 0)).json.result;
+      expect(status).toMatchObject({ account, state: "INITIALIZED" });
+      expect(status.inventory).toEqual([
+        {
+          token: MEME,
+          balance: String(HUMAN_MEME + 5n * UNIT),
+          reserved: String(5n * UNIT),
+          unallocated: String(HUMAN_MEME),
+        },
+      ]);
+      const listed = (await s(["session", "list"], 0)).json.result;
+      expect(listed.sessions).toEqual(status.sessions);
+      expect(status.sessions).toHaveLength(1);
+      const [session] = status.sessions;
+      expect(session).toMatchObject({
+        keyHash: keyHash.toLowerCase(),
+        profile: "trader",
+        registered: true,
+        isAdmin: false,
+        hook: HOOK,
+        hooked: true,
+        summary: { initialized: true, active: true, revoked: false },
+        remaining: [{ token: USD, amount: String(usd(40)) }],
+        inventory: [{ token: MEME, amount: String(5n * UNIT) }],
+      });
+      // Calibur Settings carry the 24 h expiry.
+      expect(session.expiry - Math.floor(Date.now() / 1000)).toBeGreaterThan(86400 - 600);
+      expect(session.policy.quoteLimits).toEqual([
+        { token: USD, totalCap: String(usd(100)), periodCap: String(usd(50)) },
+      ]);
+      expect(session.policy.trustedSpenders).toEqual([PAD]);
+      expect(session.policy.permissions).toHaveLength(3);
+      expect(session.policy.maxDeadlineWindow).toBe(600);
+    },
+    STEP_MS,
+  );
 
   describe("4. every overreach is refused by the CLI, the sponsor and, through handleOps, the chain", () => {
-    it("a target outside the allowlist (MockUSD.transfer)", async () => {
-      const transfer: Call = {
-        to: USD,
-        value: 0n,
-        data: encodeFunctionData({
-          abi: erc20Abi,
-          functionName: "transfer",
-          args: [ATTACKER.address, 1n],
-        }),
-      };
-      const error = await refusedEverywhere([transfer], {
-        cli: 10,
-        sponsor: "SIMULATION_FAILED",
-        chain: "reverted: CallNotPermitted",
-      });
-      expect(error.code).toBe("POLICY_VIOLATION");
-    }, 120_000);
+    it(
+      "a target outside the allowlist (MockUSD.transfer)",
+      async () => {
+        const transfer: Call = {
+          to: USD,
+          value: 0n,
+          data: encodeFunctionData({
+            abi: erc20Abi,
+            functionName: "transfer",
+            args: [ATTACKER.address, 1n],
+          }),
+        };
+        const error = await refusedEverywhere([transfer], {
+          cli: 10,
+          sponsor: "SIMULATION_FAILED",
+          chain: "reverted: CallNotPermitted",
+        });
+        expect(error.code).toBe("POLICY_VIOLATION");
+      },
+      STEP_MS,
+    );
 
-    it("an approve over the remaining limit", async () => {
-      const error = await refusedEverywhere([approve(usd(41))], {
-        cli: 11,
-        sponsor: "SIMULATION_FAILED",
-        chain: "reverted: LimitExceeded",
-      });
-      expect(error).toMatchObject({ code: "LIMIT_EXCEEDED", remaining: String(usd(40)) });
-    }, 120_000);
+    it(
+      "an approve over the remaining limit",
+      async () => {
+        const error = await refusedEverywhere([approve(usd(41))], {
+          cli: 11,
+          sponsor: "SIMULATION_FAILED",
+          chain: "reverted: LimitExceeded",
+        });
+        expect(error).toMatchObject({ code: "LIMIT_EXCEEDED", remaining: String(usd(40)) });
+      },
+      STEP_MS,
+    );
 
-    it("a buy over the remaining limit, spending an allowance the human set", async () => {
-      // The allowance belongs to the account: the root may approve more than the session's limit.
-      await landed(await s(["account", "exec", "--calls", callsJson([approve(usd(100))])], 0));
-      const error = await refusedEverywhere([await trade("buy", usd(41))], {
-        cli: 11,
-        sponsor: "SIMULATION_FAILED",
-        chain: "reverted: LimitExceeded",
-      });
-      expect(error.code).toBe("LIMIT_EXCEEDED");
-      await landed(await s(["account", "exec", "--calls", callsJson([approve(0n)])], 0));
-      expect(await allowance()).toBe(0n);
-    }, 180_000);
+    it(
+      "a buy over the remaining limit, spending an allowance the human set",
+      async () => {
+        // The allowance belongs to the account: the root may approve more than the session's limit.
+        await landed(await s(["account", "exec", "--calls", callsJson([approve(usd(100))])], 0));
+        const error = await refusedEverywhere([await trade("buy", usd(41))], {
+          cli: 11,
+          sponsor: "SIMULATION_FAILED",
+          chain: "reverted: LimitExceeded",
+        });
+        expect(error.code).toBe("LIMIT_EXCEEDED");
+        await landed(await s(["account", "exec", "--calls", callsJson([approve(0n)])], 0));
+        expect(await allowance()).toBe(0n);
+      },
+      STEP_MS,
+    );
 
-    it("selling more than the session's inventory, reaching into the meme the human held before", async () => {
-      // 5 attributed + 7 the human's: the balance covers the sale, the attribution does not.
-      expect(await balanceOf(MEME)).toBeGreaterThan(5n * UNIT + 1n);
-      const error = await refusedEverywhere([await trade("sell", 5n * UNIT + 1n)], {
-        cli: 12,
-        sponsor: "SIMULATION_FAILED",
-        chain: "reverted: InventoryExceeded",
-      });
-      expect(error).toMatchObject({ code: "INVENTORY_EXCEEDED", held: String(5n * UNIT) });
-    }, 120_000);
+    it(
+      "selling more than the session's inventory, reaching into the meme the human held before",
+      async () => {
+        // 5 attributed + 7 the human's: the balance covers the sale, the attribution does not.
+        expect(await balanceOf(MEME)).toBeGreaterThan(5n * UNIT + 1n);
+        const error = await refusedEverywhere([await trade("sell", 5n * UNIT + 1n)], {
+          cli: 12,
+          sponsor: "SIMULATION_FAILED",
+          chain: "reverted: InventoryExceeded",
+        });
+        expect(error).toMatchObject({ code: "INVENTORY_EXCEEDED", held: String(5n * UNIT) });
+      },
+      STEP_MS,
+    );
 
-    it("a call to the hook (raising its own caps with updatePolicy)", async () => {
-      const [current] = await client.readContract({
-        address: HOOK,
-        abi: agentPolicyHookAbi,
-        functionName: "getPolicy",
-        args: [keyHash, account],
-      });
-      const raised = {
-        ...current,
-        quoteLimits: current.quoteLimits.map((q) => ({ ...q, periodCap: q.totalCap * 10n })),
-      };
-      const call: Call = {
-        to: HOOK,
-        value: 0n,
-        data: encodeFunctionData({
+    it(
+      "a call to the hook (raising its own caps with updatePolicy)",
+      async () => {
+        const [current] = await client.readContract({
+          address: HOOK,
           abi: agentPolicyHookAbi,
-          functionName: "updatePolicy",
-          args: [keyHash, raised],
-        }),
-      };
-      await refusedEverywhere([call], {
-        cli: 10,
-        sponsor: "SIMULATION_FAILED",
-        chain: "reverted: TargetIsHook",
-      });
-    }, 120_000);
+          functionName: "getPolicy",
+          args: [keyHash, account],
+        });
+        const raised = {
+          ...current,
+          quoteLimits: current.quoteLimits.map((q) => ({ ...q, periodCap: q.totalCap * 10n })),
+        };
+        const call: Call = {
+          to: HOOK,
+          value: 0n,
+          data: encodeFunctionData({
+            abi: agentPolicyHookAbi,
+            functionName: "updatePolicy",
+            args: [keyHash, raised],
+          }),
+        };
+        await refusedEverywhere([call], {
+          cli: 10,
+          sponsor: "SIMULATION_FAILED",
+          chain: "reverted: TargetIsHook",
+        });
+      },
+      STEP_MS,
+    );
 
-    it("a buy with a deadline beyond the policy's window", async () => {
-      const call = await trade("buy", 1n, { deadline: (await now()) + 3600n });
-      await refusedEverywhere([call], {
-        cli: 10,
-        sponsor: "SIMULATION_FAILED",
-        chain: "reverted: DeadlineOutOfRange",
-      });
-    }, 120_000);
+    it(
+      "a buy with a deadline beyond the policy's window",
+      async () => {
+        const call = await trade("buy", 1n, { deadline: (await now()) + 3600n });
+        await refusedEverywhere([call], {
+          cli: 10,
+          sponsor: "SIMULATION_FAILED",
+          chain: "reverted: DeadlineOutOfRange",
+        });
+      },
+      STEP_MS,
+    );
 
-    it("a sell whose proceeds go to someone else (recipient ≠ self)", async () => {
-      const call = await trade("sell", 1n, { recipient: ATTACKER.address });
-      await refusedEverywhere([call], {
-        cli: 10,
-        sponsor: "SIMULATION_FAILED",
-        chain: "reverted: RecipientNotAccount",
-      });
-    }, 120_000);
+    it(
+      "a sell whose proceeds go to someone else (recipient ≠ self)",
+      async () => {
+        const call = await trade("sell", 1n, { recipient: ATTACKER.address });
+        await refusedEverywhere([call], {
+          cli: 10,
+          sponsor: "SIMULATION_FAILED",
+          chain: "reverted: RecipientNotAccount",
+        });
+      },
+      STEP_MS,
+    );
 
-    it("an ERC-1271 signature by the session key (no CLI or sponsor path exists)", async () => {
-      // A valid ERC-7739 nested personal-sign signature by the session key: Calibur verifies it,
-      // then the hook rejects it.
-      const message = "permit me";
-      const signature = await trader.signTypedData({
-        domain: await getCaliburDomain(client, {
-          account,
-          implementation: book.caliburEntry,
-          chainId: book.chainId,
-        }),
-        types: { PersonalSign: [{ name: "prefixed", type: "bytes" }] },
-        primaryType: "PersonalSign",
-        message: { prefixed: toPrefixedMessage(message) },
-      });
-      const wrapped = encodeAbiParameters(
-        [{ type: "bytes32" }, { type: "bytes" }, { type: "bytes" }],
-        [keyHash, signature, "0x"],
-      );
-      const data = encodeFunctionData({
-        abi: parseAbi(["function isValidSignature(bytes32, bytes) view returns (bytes4)"]),
-        args: [hashMessage(message), wrapped],
-      });
-      const reason = await client.call({ to: account, data }).then(
-        () => "no revert",
-        (e: unknown) => revertName(revertData(e)),
-      );
-      expect(reason).toBe("SessionKeySignatureRejected");
-    }, 120_000);
+    it(
+      "an ERC-1271 signature by the session key (no CLI or sponsor path exists)",
+      async () => {
+        // A valid ERC-7739 nested personal-sign signature by the session key: Calibur verifies it,
+        // then the hook rejects it.
+        const message = "permit me";
+        const signature = await trader.signTypedData({
+          domain: await getCaliburDomain(client, {
+            account,
+            implementation: book.caliburEntry,
+            chainId: book.chainId,
+          }),
+          types: { PersonalSign: [{ name: "prefixed", type: "bytes" }] },
+          primaryType: "PersonalSign",
+          message: { prefixed: toPrefixedMessage(message) },
+        });
+        const wrapped = encodeAbiParameters(
+          [{ type: "bytes32" }, { type: "bytes" }, { type: "bytes" }],
+          [keyHash, signature, "0x"],
+        );
+        const data = encodeFunctionData({
+          abi: parseAbi(["function isValidSignature(bytes32, bytes) view returns (bytes4)"]),
+          args: [hashMessage(message), wrapped],
+        });
+        const reason = await client.call({ to: account, data }).then(
+          () => "no revert",
+          (e: unknown) => revertName(revertData(e)),
+        );
+        expect(reason).toBe("SessionKeySignatureRejected");
+      },
+      STEP_MS,
+    );
 
-    it("a UserOp whose sponsorship window has passed: the paymaster refuses it (AA32)", async () => {
-      // No CLI or sponsor request carries a stale window: the SDK refuses a passed deadline before
-      // asking, and the sponsor's REQUEST_EXPIRED check is unit-tested (packages/sponsor/test).
-      const before = await state();
-      const { op } = await userOp(trader, keyHash, [approve(1n)], {
-        validUntil: Number(await now()) - 1,
-      });
-      expect(await handleOps(op)).toBe("AA32 paymaster expired or not due");
-      expect(await state()).toEqual(before);
-    }, 120_000);
+    it(
+      "a UserOp whose sponsorship window has passed: the paymaster refuses it (AA32)",
+      async () => {
+        // No CLI or sponsor request carries a stale window: the SDK refuses a passed deadline before
+        // asking, and the sponsor's REQUEST_EXPIRED check is unit-tested (packages/sponsor/test).
+        const before = await state();
+        const { op } = await userOp(trader, keyHash, [approve(1n)], {
+          validUntil: Number(await now()) - 1,
+        });
+        expect(await handleOps(op)).toBe("AA32 paymaster expired or not due");
+        expect(await state()).toEqual(before);
+      },
+      STEP_MS,
+    );
 
     describe("I10: a session UserOp without our paymaster fails validation in the hook", () => {
       const wrongPaymaster = toFunctionSelector("WrongPaymaster()");
 
-      it("with no paymaster: AA23 WrongPaymaster, even when the account could pay the prefund", async () => {
-        const before = await state();
-        const nonce = await epNonce(laneOf(keyHash));
-        const { op } = await userOp(trader, keyHash, [approve(1n)], { paymaster: "none" });
-        // With 1 MNT the account could pay its prefund: the hook, not an empty balance, refuses.
-        const funded = await client
-          .call({
-            account: ATTACKER.address,
-            to: EP,
-            data: encodeFunctionData({
-              abi: entryPoint08Abi,
-              functionName: "handleOps",
-              args: [[toPackedUserOperation(op)], ATTACKER.address],
-            }),
-            stateOverride: [{ address: account, balance: parseEther("1") }],
-          })
-          .then(
-            () => "no revert",
-            (e: unknown) => failedOp(revertData(e)),
-          );
-        expect(funded).toBe("AA23 reverted: WrongPaymaster");
-        expect(await handleOps(op)).toBe("AA23 reverted: WrongPaymaster");
-        // The strict bundler refuses it in validation too.
-        await expect(
-          bundlerRpc(stack.bundler.url, "eth_sendUserOperation", [
-            formatUserOperationRequest(op),
-            EP,
-          ]),
-        ).rejects.toThrow(wrongPaymaster);
-        expect(await state()).toEqual(before);
-        expect(await epNonce(laneOf(keyHash))).toBe(nonce);
-      }, 120_000);
+      it(
+        "with no paymaster: AA23 WrongPaymaster, even when the account could pay the prefund",
+        async () => {
+          const before = await state();
+          const nonce = await epNonce(laneOf(keyHash));
+          const { op } = await userOp(trader, keyHash, [approve(1n)], { paymaster: "none" });
+          // With 1 MNT the account could pay its prefund: the hook, not an empty balance, refuses.
+          const funded = await client
+            .call({
+              account: ATTACKER.address,
+              to: EP,
+              data: encodeFunctionData({
+                abi: entryPoint08Abi,
+                functionName: "handleOps",
+                args: [[toPackedUserOperation(op)], ATTACKER.address],
+              }),
+              stateOverride: [{ address: account, balance: parseEther("1") }],
+            })
+            .then(
+              () => "no revert",
+              (e: unknown) => failedOp(revertData(e)),
+            );
+          expect(funded).toBe("AA23 reverted: WrongPaymaster");
+          expect(await handleOps(op)).toBe("AA23 reverted: WrongPaymaster");
+          // The strict bundler refuses it in validation too.
+          await expect(
+            bundlerRpc(stack.bundler.url, "eth_sendUserOperation", [
+              formatUserOperationRequest(op),
+              EP,
+            ]),
+          ).rejects.toThrow(wrongPaymaster);
+          expect(await state()).toEqual(before);
+          expect(await epNonce(laneOf(keyHash))).toBe(nonce);
+        },
+        STEP_MS,
+      );
 
-      it("with another working, funded paymaster: AA23 WrongPaymaster; neither deposit is charged", async () => {
-        // A second VerifyingPaymaster (the deployed code, same signer) with its own deposit. The
-        // root's UserOps may use it; a session's may not.
-        const clone = privateKeyToAddress(generatePrivateKey());
-        await client.setCode({
-          address: clone,
-          bytecode: (await client.getCode({ address: PAYMASTER })) as Hex,
-        });
-        const hash = await attacker().writeContract({
-          address: EP,
-          abi: entryPoint08Abi,
-          functionName: "depositTo",
-          args: [clone],
-          value: parseEther("1"),
-        });
-        await client.waitForTransactionReceipt({ hash, timeout: 30_000 });
-        const human = loadProfileSigner("human", keystore);
-        expect(
-          await handleOps((await userOp(human, zeroHash, [approve(0n)], { paymaster: clone })).op),
-        ).toBe("success");
+      it(
+        "with another working, funded paymaster: AA23 WrongPaymaster; neither deposit is charged",
+        async () => {
+          // A second VerifyingPaymaster (the deployed code, same signer) with its own deposit. The
+          // root's UserOps may use it; a session's may not.
+          const clone = privateKeyToAddress(generatePrivateKey());
+          await client.setCode({
+            address: clone,
+            bytecode: (await client.getCode({ address: PAYMASTER })) as Hex,
+          });
+          const hash = await attacker().writeContract({
+            address: EP,
+            abi: entryPoint08Abi,
+            functionName: "depositTo",
+            args: [clone],
+            value: parseEther("1"),
+          });
+          await client.waitForTransactionReceipt({ hash, timeout: 30_000 });
+          const human = loadProfileSigner("human", keystore);
+          expect(
+            await handleOps(
+              (await userOp(human, zeroHash, [approve(0n)], { paymaster: clone })).op,
+            ),
+          ).toBe("success");
 
-        const before = {
-          ...(await state()),
-          clone: await deposit(clone),
-          ours: await deposit(PAYMASTER),
-        };
-        const { op } = await userOp(trader, keyHash, [approve(1n)], { paymaster: clone });
-        expect(await handleOps(op)).toBe("AA23 reverted: WrongPaymaster");
-        await expect(
-          bundlerRpc(stack.bundler.url, "eth_sendUserOperation", [
-            formatUserOperationRequest(op),
-            EP,
-          ]),
-        ).rejects.toThrow(wrongPaymaster);
-        expect({
-          ...(await state()),
-          clone: await deposit(clone),
-          ours: await deposit(PAYMASTER),
-        }).toEqual(before);
-      }, 120_000);
+          const before = {
+            ...(await state()),
+            clone: await deposit(clone),
+            ours: await deposit(PAYMASTER),
+          };
+          const { op } = await userOp(trader, keyHash, [approve(1n)], { paymaster: clone });
+          expect(await handleOps(op)).toBe("AA23 reverted: WrongPaymaster");
+          await expect(
+            bundlerRpc(stack.bundler.url, "eth_sendUserOperation", [
+              formatUserOperationRequest(op),
+              EP,
+            ]),
+          ).rejects.toThrow(wrongPaymaster);
+          expect({
+            ...(await state()),
+            clone: await deposit(clone),
+            ours: await deposit(PAYMASTER),
+          }).toEqual(before);
+        },
+        STEP_MS,
+      );
     });
 
     it("left the session's limits and inventory untouched", async () => {
@@ -954,237 +1024,283 @@ function bundlerRun(mode: Mode) {
   });
 
   describe("cross-path replay: a signed batch runs once, and only on the path it was signed for", () => {
-    it("a SignedBatchedCall (relayer path) does not validate as a UserOp, and runs once", async () => {
-      const lane = laneOf(keyHash);
-      const [seq, nonce] = [await readCaliburNonce(client, account, lane), await epNonce(lane)];
-      const signed = await signDirect(trader, keyHash, [approve(1n)]);
-      const [signature] = decodeAbiParameters(
-        [{ type: "bytes" }, { type: "bytes" }],
-        decodeExecute(signed).wrappedSignature,
-      );
-      // The same calls, the same key, its signature: the EntryPoint asks for another digest.
-      const { op } = await userOp(trader, keyHash, [approve(1n)], { signature });
-      expect(await handleOps(op)).toBe("AA24 signature error");
+    it(
+      "a SignedBatchedCall (relayer path) does not validate as a UserOp, and runs once",
+      async () => {
+        const lane = laneOf(keyHash);
+        const [seq, nonce] = [await readCaliburNonce(client, account, lane), await epNonce(lane)];
+        const signed = await signDirect(trader, keyHash, [approve(1n)]);
+        const [signature] = decodeAbiParameters(
+          [{ type: "bytes" }, { type: "bytes" }],
+          decodeExecute(signed).wrappedSignature,
+        );
+        // The same calls, the same key, its signature: the EntryPoint asks for another digest.
+        const { op } = await userOp(trader, keyHash, [approve(1n)], { signature });
+        expect(await handleOps(op)).toBe("AA24 signature error");
 
-      expect(await execute(signed)).toBe("success");
-      expect(await allowance()).toBe(1n);
-      expect(await execute(signed)).toBe("InvalidNonce");
-      expect(await handleOps(op)).toBe("AA24 signature error");
-      expect(await allowance()).toBe(1n);
-      // Only Calibur's sequence moved.
-      expect(await readCaliburNonce(client, account, lane)).toBe(seq + 1n);
-      expect(await epNonce(lane)).toBe(nonce);
-    }, 180_000);
+        expect(await execute(signed)).toBe("success");
+        expect(await allowance()).toBe(1n);
+        expect(await execute(signed)).toBe("InvalidNonce");
+        expect(await handleOps(op)).toBe("AA24 signature error");
+        expect(await allowance()).toBe(1n);
+        // Only Calibur's sequence moved.
+        expect(await readCaliburNonce(client, account, lane)).toBe(seq + 1n);
+        expect(await epNonce(lane)).toBe(nonce);
+      },
+      STEP_MS,
+    );
 
-    it("a UserOp (bundler path) does not validate as a SignedBatchedCall, and runs once", async () => {
-      const lane = laneOf(keyHash);
-      const [seq, nonce] = [await readCaliburNonce(client, account, lane), await epNonce(lane)];
-      const { op, signature } = await userOp(trader, keyHash, [approve(2n)]);
-      expect(await handleOps(op)).toBe("success");
-      expect(await allowance()).toBe(2n);
-      expect(await handleOps(op)).toBe("AA25 invalid account nonce");
+    it(
+      "a UserOp (bundler path) does not validate as a SignedBatchedCall, and runs once",
+      async () => {
+        const lane = laneOf(keyHash);
+        const [seq, nonce] = [await readCaliburNonce(client, account, lane), await epNonce(lane)];
+        const { op, signature } = await userOp(trader, keyHash, [approve(2n)]);
+        expect(await handleOps(op)).toBe("success");
+        expect(await allowance()).toBe(2n);
+        expect(await handleOps(op)).toBe("AA25 invalid account nonce");
 
-      // The UserOp's signature on a SignedBatchedCall of the same calls, key and Calibur nonce.
-      const batch = {
-        batchedCall: { calls: [approve(2n)], revertOnFailure: true },
-        nonce: seq,
-        keyHash,
-        executor: ATTACKER.address,
-        deadline: (await now()) + 600n,
-      };
-      const forged = encodeFunctionData({
-        abi: caliburAbi,
-        functionName: "execute",
-        args: [
-          batch,
-          encodeAbiParameters([{ type: "bytes" }, { type: "bytes" }], [signature, "0x"]),
-        ],
-      });
-      expect(await execute(forged)).toBe("InvalidSignature");
-      expect(await allowance()).toBe(2n);
-      // Only the EntryPoint nonce moved.
-      expect(await epNonce(lane)).toBe(nonce + 1n);
-      expect(await readCaliburNonce(client, account, lane)).toBe(seq);
-    }, 180_000);
+        // The UserOp's signature on a SignedBatchedCall of the same calls, key and Calibur nonce.
+        const batch = {
+          batchedCall: { calls: [approve(2n)], revertOnFailure: true },
+          nonce: seq,
+          keyHash,
+          executor: ATTACKER.address,
+          deadline: (await now()) + 600n,
+        };
+        const forged = encodeFunctionData({
+          abi: caliburAbi,
+          functionName: "execute",
+          args: [
+            batch,
+            encodeAbiParameters([{ type: "bytes" }, { type: "bytes" }], [signature, "0x"]),
+          ],
+        });
+        expect(await execute(forged)).toBe("InvalidSignature");
+        expect(await allowance()).toBe(2n);
+        // Only the EntryPoint nonce moved.
+        expect(await epNonce(lane)).toBe(nonce + 1n);
+        expect(await readCaliburNonce(client, account, lane)).toBe(seq);
+      },
+      STEP_MS,
+    );
   });
 
   describe("cross-lane nonce consumption", () => {
-    it("on chain a session key can consume another key's and the root's lane (a known limitation)", async () => {
-      const grant = await s(["session", "grant", "--agent", "other", "--policy", policy], 0);
-      await landed(grant);
-      otherHash = grant.json.result.keyHash as Hex;
-      other = loadProfileSigner("other", keystore);
-      const otherLane = laneOf(otherHash);
-      expect(otherLane).not.toBe(laneOf(keyHash));
+    it(
+      "on chain a session key can consume another key's and the root's lane (a known limitation)",
+      async () => {
+        const grant = await s(["session", "grant", "--agent", "other", "--policy", policy], 0);
+        await landed(grant);
+        otherHash = grant.json.result.keyHash as Hex;
+        other = loadProfileSigner("other", keystore);
+        const otherLane = laneOf(otherHash);
+        expect(otherLane).not.toBe(laneOf(keyHash));
 
-      // EntryPoint nonces: the trader's UserOps on the other key's lane and on the root lane 0 are
-      // valid; nothing on chain binds a nonce key to the signing key (DESIGN §4.1).
-      const [onOther, onRoot] = [await epNonce(otherLane), await epNonce(0n)];
-      for (const nonceKey of [otherLane, 0n]) {
-        const { op } = await userOp(trader, keyHash, [approve(0n)], { nonceKey });
-        expect(await handleOps(op)).toBe("success");
-      }
-      expect(await epNonce(otherLane)).toBe(onOther + 1n);
-      expect(await epNonce(0n)).toBe(onRoot + 1n);
+        // EntryPoint nonces: the trader's UserOps on the other key's lane and on the root lane 0 are
+        // valid; nothing on chain binds a nonce key to the signing key (DESIGN §4.1).
+        const [onOther, onRoot] = [await epNonce(otherLane), await epNonce(0n)];
+        for (const nonceKey of [otherLane, 0n]) {
+          const { op } = await userOp(trader, keyHash, [approve(0n)], { nonceKey });
+          expect(await handleOps(op)).toBe("success");
+        }
+        expect(await epNonce(otherLane)).toBe(onOther + 1n);
+        expect(await epNonce(0n)).toBe(onRoot + 1n);
 
-      // Calibur's SignedBatchedCall sequences: the same.
-      const seq = await readCaliburNonce(client, account, otherLane);
-      expect(await execute(await signDirect(trader, keyHash, [approve(0n)], otherLane))).toBe(
-        "success",
-      );
-      expect(await readCaliburNonce(client, account, otherLane)).toBe(seq + 1n);
+        // Calibur's SignedBatchedCall sequences: the same.
+        const seq = await readCaliburNonce(client, account, otherLane);
+        expect(await execute(await signDirect(trader, keyHash, [approve(0n)], otherLane))).toBe(
+          "success",
+        );
+        expect(await readCaliburNonce(client, account, otherLane)).toBe(seq + 1n);
 
-      // A DoS of what the other key had signed only: it still executes on the next sequence.
-      const r = await s(
-        ["agent", "exec", "--agent", "other", "--calls", callsJson([approve(0n)])],
-        0,
-      );
-      await landed(r);
-    }, 240_000);
+        // A DoS of what the other key had signed only: it still executes on the next sequence.
+        const r = await s(
+          ["agent", "exec", "--agent", "other", "--calls", callsJson([approve(0n)])],
+          0,
+        );
+        await landed(r);
+      },
+      STEP_MS,
+    );
 
-    it("the sponsor rejects it on both paths: WRONG_LANE, ROOT_LANE_MISUSE", async () => {
-      for (const via of ["bundler", "relayer"] as const) {
-        await sponsorRefuses(trader, keyHash, [approve(0n)], "WRONG_LANE", via, laneOf(otherHash));
-        await sponsorRefuses(trader, keyHash, [approve(0n)], "ROOT_LANE_MISUSE", via, 0n);
-      }
-    }, 120_000);
+    it(
+      "the sponsor rejects it on both paths: WRONG_LANE, ROOT_LANE_MISUSE",
+      async () => {
+        for (const via of ["bundler", "relayer"] as const) {
+          await sponsorRefuses(
+            trader,
+            keyHash,
+            [approve(0n)],
+            "WRONG_LANE",
+            via,
+            laneOf(otherHash),
+          );
+          await sponsorRefuses(trader, keyHash, [approve(0n)], "ROOT_LANE_MISUSE", via, 0n);
+        }
+      },
+      STEP_MS,
+    );
   });
 
   describe("5. session revoke", () => {
     let preSigned: UserOperation<"0.8">;
 
-    it("revokes; old and new signatures no longer execute", async () => {
-      preSigned = (await userOp(trader, keyHash, [approve(1n)])).op;
-      const r = await s(["session", "revoke", "--agent", "trader"], 0);
-      expect(r.json.result).toMatchObject({ profile: "trader" });
-      await landed(r);
-      expect(await allowance()).toBe(0n);
+    it(
+      "revokes; old and new signatures no longer execute",
+      async () => {
+        preSigned = (await userOp(trader, keyHash, [approve(1n)])).op;
+        const r = await s(["session", "revoke", "--agent", "trader"], 0);
+        expect(r.json.result).toMatchObject({ profile: "trader" });
+        await landed(r);
+        expect(await allowance()).toBe(0n);
 
-      // The UserOp signed before the revoke, and one signed after it: Calibur no longer knows the
-      // key and answers SIG_VALIDATION_FAILED.
-      expect(await handleOps(preSigned)).toBe("AA24 signature error");
-      expect(await handleOps((await userOp(trader, keyHash, [approve(1n)])).op)).toBe(
-        "AA24 signature error",
-      );
-      expect((await cliRefuses("trader", keyHash, [approve(1n)], 13)).code).toBe(
-        "KEY_EXPIRED_OR_REVOKED",
-      );
-      await sponsorRefuses(trader, keyHash, [approve(1n)], "KEY_NOT_REGISTERED");
-    }, 180_000);
+        // The UserOp signed before the revoke, and one signed after it: Calibur no longer knows the
+        // key and answers SIG_VALIDATION_FAILED.
+        expect(await handleOps(preSigned)).toBe("AA24 signature error");
+        expect(await handleOps((await userOp(trader, keyHash, [approve(1n)])).op)).toBe(
+          "AA24 signature error",
+        );
+        expect((await cliRefuses("trader", keyHash, [approve(1n)], 13)).code).toBe(
+          "KEY_EXPIRED_OR_REVOKED",
+        );
+        await sponsorRefuses(trader, keyHash, [approve(1n)], "KEY_NOT_REGISTERED");
+      },
+      STEP_MS,
+    );
 
-    it("re-granting the same key is rejected (SessionRevoked)", async () => {
-      const [old] = await client.readContract({
-        address: HOOK,
-        abi: agentPolicyHookAbi,
-        functionName: "getPolicy",
-        args: [keyHash, account],
-      });
-      const settings = BigInt(HOOK) | (BigInt(Math.floor(Date.now() / 1000) + 86400) << 160n);
-      const self = (data: Hex): Call => ({ to: account, value: 0n, data });
-      const register = self(
-        encodeFunctionData({
-          abi: caliburAbi,
-          functionName: "register",
-          args: [
-            {
-              keyType: 2,
-              publicKey: encodeAbiParameters([{ type: "address" }], [trader.address]),
-            },
-          ],
-        }),
-      );
-      const update = self(
-        encodeFunctionData({ abi: caliburAbi, functionName: "update", args: [keyHash, settings] }),
-      );
-      const setPolicy: Call = {
-        to: HOOK,
-        value: 0n,
-        data: encodeFunctionData({
+    it(
+      "re-granting the same key is rejected (SessionRevoked)",
+      async () => {
+        const [old] = await client.readContract({
+          address: HOOK,
           abi: agentPolicyHookAbi,
-          functionName: "setPolicy",
-          args: [keyHash, old],
-        }),
-      };
-      const regrant = [register, update, setPolicy];
+          functionName: "getPolicy",
+          args: [keyHash, account],
+        });
+        const settings = BigInt(HOOK) | (BigInt(Math.floor(Date.now() / 1000) + 86400) << 160n);
+        const self = (data: Hex): Call => ({ to: account, value: 0n, data });
+        const register = self(
+          encodeFunctionData({
+            abi: caliburAbi,
+            functionName: "register",
+            args: [
+              {
+                keyType: 2,
+                publicKey: encodeAbiParameters([{ type: "address" }], [trader.address]),
+              },
+            ],
+          }),
+        );
+        const update = self(
+          encodeFunctionData({
+            abi: caliburAbi,
+            functionName: "update",
+            args: [keyHash, settings],
+          }),
+        );
+        const setPolicy: Call = {
+          to: HOOK,
+          value: 0n,
+          data: encodeFunctionData({
+            abi: agentPolicyHookAbi,
+            functionName: "setPolicy",
+            args: [keyHash, old],
+          }),
+        };
+        const regrant = [register, update, setPolicy];
 
-      // Through the CLI the sponsor's simulation refuses it; the chain says why.
-      const r = await s(["account", "exec", "--calls", callsJson(regrant)], 20);
-      expect(r.json.error).toMatchObject({ code: "SPONSOR_REJECTED", reason: "SIMULATION_FAILED" });
-      const batched = encodeFunctionData({
-        abi: parseAbi([
-          "struct Call { address to; uint256 value; bytes data; }",
-          "struct BatchedCall { Call[] calls; bool revertOnFailure; }",
-          "function execute(BatchedCall batchedCall)",
-        ]),
-        args: [{ calls: regrant, revertOnFailure: true }],
-      });
-      const reason = await client.call({ account, to: account, data: batched }).then(
-        () => "no revert",
-        (e: unknown) => revertName(revertData(e)),
-      );
-      expect(reason).toBe("CallFailed(SessionRevoked)");
+        // Through the CLI the sponsor's simulation refuses it; the chain says why.
+        const r = await s(["account", "exec", "--calls", callsJson(regrant)], 20);
+        expect(r.json.error).toMatchObject({
+          code: "SPONSOR_REJECTED",
+          reason: "SIMULATION_FAILED",
+        });
+        const batched = encodeFunctionData({
+          abi: parseAbi([
+            "struct Call { address to; uint256 value; bytes data; }",
+            "struct BatchedCall { Call[] calls; bool revertOnFailure; }",
+            "function execute(BatchedCall batchedCall)",
+          ]),
+          args: [{ calls: regrant, revertOnFailure: true }],
+        });
+        const reason = await client.call({ account, to: account, data: batched }).then(
+          () => "no revert",
+          (e: unknown) => revertName(revertData(e)),
+        );
+        expect(reason).toBe("CallFailed(SessionRevoked)");
 
-      // Even with the key registered on Calibur again (without the hook policy), so that Calibur
-      // accepts its signature, the hook's validation callback stops the old and a new UserOp.
-      await landed(await s(["account", "exec", "--calls", callsJson([register, update])], 0));
-      expect(await handleOps(preSigned)).toBe("AA23 reverted: SessionInactive");
-      expect(await handleOps((await userOp(trader, keyHash, [approve(1n)])).op)).toBe(
-        "AA23 reverted: SessionInactive",
-      );
-      await sponsorRefuses(trader, keyHash, [approve(1n)], "KEY_INACTIVE");
-      expect((await cliRefuses("trader", keyHash, [approve(1n)], 13)).code).toBe(
-        "KEY_EXPIRED_OR_REVOKED",
-      );
-      expect(await allowance()).toBe(0n);
-    }, 180_000);
+        // Even with the key registered on Calibur again (without the hook policy), so that Calibur
+        // accepts its signature, the hook's validation callback stops the old and a new UserOp.
+        await landed(await s(["account", "exec", "--calls", callsJson([register, update])], 0));
+        expect(await handleOps(preSigned)).toBe("AA23 reverted: SessionInactive");
+        expect(await handleOps((await userOp(trader, keyHash, [approve(1n)])).op)).toBe(
+          "AA23 reverted: SessionInactive",
+        );
+        await sponsorRefuses(trader, keyHash, [approve(1n)], "KEY_INACTIVE");
+        expect((await cliRefuses("trader", keyHash, [approve(1n)], 13)).code).toBe(
+          "KEY_EXPIRED_OR_REVOKED",
+        );
+        expect(await allowance()).toBe(0n);
+      },
+      STEP_MS,
+    );
 
-    it("6. account status / session list show the revoked session with its frozen inventory", async () => {
-      const status = (await s(["account", "status"], 0)).json.result;
-      expect(status.state).toBe("INITIALIZED");
-      const listed = (await s(["session", "list"], 0)).json.result;
-      expect(listed.sessions).toEqual(status.sessions);
-      const session = status.sessions.find((x: { profile?: string }) => x.profile === "trader");
-      expect(session).toMatchObject({
-        keyHash: keyHash.toLowerCase(),
-        summary: { initialized: true, active: false, revoked: true },
-        inventory: [{ token: MEME, amount: String(5n * UNIT) }],
-      });
-      expect(
-        status.sessions.find((x: { profile?: string }) => x.profile === "other"),
-      ).toMatchObject({
-        keyHash: otherHash.toLowerCase(),
-        summary: { initialized: true, active: true, revoked: false },
-      });
-      // Revoke iterates no inventory: it stays reserved until the root releases it.
-      expect(status.inventory).toEqual([
-        {
-          token: MEME,
-          balance: String(HUMAN_MEME + 5n * UNIT),
-          reserved: String(5n * UNIT),
-          unallocated: String(HUMAN_MEME),
-        },
-      ]);
-    }, 120_000);
+    it(
+      "6. account status / session list show the revoked session with its frozen inventory",
+      async () => {
+        const status = (await s(["account", "status"], 0)).json.result;
+        expect(status.state).toBe("INITIALIZED");
+        const listed = (await s(["session", "list"], 0)).json.result;
+        expect(listed.sessions).toEqual(status.sessions);
+        const session = status.sessions.find((x: { profile?: string }) => x.profile === "trader");
+        expect(session).toMatchObject({
+          keyHash: keyHash.toLowerCase(),
+          summary: { initialized: true, active: false, revoked: true },
+          inventory: [{ token: MEME, amount: String(5n * UNIT) }],
+        });
+        expect(
+          status.sessions.find((x: { profile?: string }) => x.profile === "other"),
+        ).toMatchObject({
+          keyHash: otherHash.toLowerCase(),
+          summary: { initialized: true, active: true, revoked: false },
+        });
+        // Revoke iterates no inventory: it stays reserved until the root releases it.
+        expect(status.inventory).toEqual([
+          {
+            token: MEME,
+            balance: String(HUMAN_MEME + 5n * UNIT),
+            reserved: String(5n * UNIT),
+            unallocated: String(HUMAN_MEME),
+          },
+        ]);
+      },
+      STEP_MS,
+    );
   });
 
   // Last: it moves the fork's clock a day ahead.
-  it("4. an expired key is refused by the CLI, the sponsor and the chain (AA22)", async () => {
-    await s(["agent", "simulate", "--agent", "other", "--calls", callsJson([approve(1n)])], 0);
-    await client.increaseTime({ seconds: 86400 + 600 });
-    await client.mine({ blocks: 1 });
+  it(
+    "4. an expired key is refused by the CLI, the sponsor and the chain (AA22)",
+    async () => {
+      await s(["agent", "simulate", "--agent", "other", "--calls", callsJson([approve(1n)])], 0);
+      await client.increaseTime({ seconds: 86400 + 600 });
+      await client.mine({ blocks: 1 });
 
-    const error = await cliRefuses("other", otherHash, [approve(1n)], 13);
-    expect(error.code).toBe("KEY_EXPIRED_OR_REVOKED");
-    await sponsorRefuses(other, otherHash, [approve(1n)], "KEY_EXPIRED");
-    expect(await handleOps((await userOp(other, otherHash, [approve(1n)])).op)).toBe(
-      "AA22 expired or not due",
-    );
+      const error = await cliRefuses("other", otherHash, [approve(1n)], 13);
+      expect(error.code).toBe("KEY_EXPIRED_OR_REVOKED");
+      await sponsorRefuses(other, otherHash, [approve(1n)], "KEY_EXPIRED");
+      expect(await handleOps((await userOp(other, otherHash, [approve(1n)])).op)).toBe(
+        "AA22 expired or not due",
+      );
 
-    const status = (await s(["account", "status"], 0)).json.result;
-    const session = status.sessions.find((x: { profile?: string }) => x.profile === "other");
-    expect(session).toMatchObject({ summary: { active: true, revoked: false } });
-    expect(BigInt(session.expiry)).toBeLessThan(await now());
-  }, 180_000);
+      const status = (await s(["account", "status"], 0)).json.result;
+      const session = status.sessions.find((x: { profile?: string }) => x.profile === "other");
+      expect(session).toMatchObject({ summary: { active: true, revoked: false } });
+      expect(BigInt(session.expiry)).toBeLessThan(await now());
+    },
+    STEP_MS,
+  );
 
   it("the human and the agents held 0 MNT throughout, and the account no EntryPoint deposit", async () => {
     await zeroMnt([account, trader.address, other.address]);
