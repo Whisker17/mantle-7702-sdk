@@ -353,9 +353,12 @@ contract AgentPolicyHook is IAgentPolicyHook {
             if (sel == INCREASE_ALLOWANCE_SELECTOR || perm.ruleKind != expected) {
                 revert RuleSelectorMismatch(perm.target, sel, perm.ruleKind);
             }
+            // A quote asset carries exactly one permission kind: the exact, metered approve.
+            (bool targetIsQuote,) = _quoteIndexCd(p.quoteLimits, perm.target);
             if (expected == RuleKind.ERC20_APPROVE) {
-                (bool isQuote,) = _quoteIndexCd(p.quoteLimits, perm.target);
-                if (!isQuote) revert ApproveTargetNotQuote(perm.target);
+                if (!targetIsQuote) revert ApproveTargetNotQuote(perm.target);
+            } else if (targetIsQuote) {
+                revert QuoteAssetPermissionNotApprove(perm.target, sel);
             } else if (expected == RuleKind.LAUNCHPAD_BUY) {
                 address quote = ILaunchpad(perm.target).quoteToken();
                 (bool isQuote,) = _quoteIndexCd(p.quoteLimits, quote);

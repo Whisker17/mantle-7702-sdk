@@ -323,6 +323,9 @@ account-level union counter is introduced).
   `quoteLimits`; absence does not mean unlimited.
 - If `maxValuePerCall > 0`, `mntLimit` must be configured.
 - The `to` of an `ERC20_APPROVE` permission must be an asset in `quoteLimits`.
+- The only permission allowed on a quote asset is `ERC20_APPROVE` (`approve`); any other
+  selector on a quote asset (`transfer`, `transferFrom`, `increaseAllowance`,
+  `increaseApproval`, …) is rejected.
 - A quote asset cannot be the `token` of a SELL (also checked at run time).
 
 #### 4.2.4 Limit semantics

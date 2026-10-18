@@ -127,7 +127,8 @@ contract AgentPolicyHookCaliburTest is AgentPolicyHookTestBase {
     }
 
     function test_erc7821Execute_isHooked() public {
-        Call[] memory calls = _one(address(usd), abi.encodeCall(IERC20.transfer, (bob, 401e18)));
+        Call[] memory calls =
+            _one(address(usd), abi.encodeCall(IERC20.approve, (address(pad), 401e18)));
         bytes32 mode = 0x0101000000000000000000000000000000000000000000000000000000000000;
         vm.prank(agent);
         vm.expectRevert(

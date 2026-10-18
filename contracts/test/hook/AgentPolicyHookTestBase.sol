@@ -45,6 +45,7 @@ abstract contract AgentPolicyHookTestBase is Test {
         pad = new FakeLaunchpad(address(usd));
         cb = new CallbackTarget();
         usd.mint(address(acct), 10_000e18);
+        acct.root(address(usd), approveData(address(cb), type(uint256).max));
         vm.deal(address(acct), 100 ether);
     }
 
@@ -59,14 +60,15 @@ abstract contract AgentPolicyHookTestBase is Test {
     }
 
     /// @dev Default policy: MNT 1/call, 3 total, 2 per day; USD 1000 total, 400 per day;
-    ///      approve(USD → pad), buy, sell, plain MNT to bob, USD transfer, callbacks, failing call.
+    ///      approve(USD → pad), buy, sell, plain MNT to bob, callbacks, failing call. The only
+    ///      permission on the quote asset is approve (policy validity check).
     function defaultPolicy() internal view returns (Policy memory p) {
         p.maxValuePerCall = 1 ether;
         p.mntLimit = QuoteLimit(address(0), 3 ether, 2 ether);
         p.quoteLimits = new QuoteLimit[](1);
         p.quoteLimits[0] = QuoteLimit(address(usd), 1000e18, 400e18);
         p.periodLength = DAY;
-        p.permissions = new CallPermission[](8);
+        p.permissions = new CallPermission[](7);
         p.permissions[0] =
             CallPermission(address(usd), IERC20.approve.selector, RuleKind.ERC20_APPROVE);
         p.permissions[1] =
@@ -74,10 +76,9 @@ abstract contract AgentPolicyHookTestBase is Test {
         p.permissions[2] =
             CallPermission(address(pad), ILaunchpad.sell.selector, RuleKind.LAUNCHPAD_SELL);
         p.permissions[3] = CallPermission(bob, bytes4(0), RuleKind.NONE);
-        p.permissions[4] = CallPermission(address(usd), IERC20.transfer.selector, RuleKind.NONE);
-        p.permissions[5] = CallPermission(address(cb), CallbackTarget.run.selector, RuleKind.NONE);
-        p.permissions[6] = CallPermission(address(cb), CallbackTarget.fail.selector, RuleKind.NONE);
-        p.permissions[7] =
+        p.permissions[4] = CallPermission(address(cb), CallbackTarget.run.selector, RuleKind.NONE);
+        p.permissions[5] = CallPermission(address(cb), CallbackTarget.fail.selector, RuleKind.NONE);
+        p.permissions[6] =
             CallPermission(address(cb), CallbackTarget.tryRun.selector, RuleKind.NONE);
         p.trustedSpenders = new address[](1);
         p.trustedSpenders[0] = address(pad);
@@ -134,8 +135,15 @@ abstract contract AgentPolicyHookTestBase is Test {
         acct.exec1(keyHash, address(pad), 0, sellData(token, amount));
     }
 
+    /// @dev A USD outflow of `amount` to bob outside the approve rule: the session calls a
+    ///      permitted non-quote target that spends an allowance the root granted (setUp).
     function transferUsd(bytes32 keyHash, uint256 amount) internal {
-        acct.exec1(keyHash, address(usd), 0, abi.encodeCall(IERC20.transfer, (bob, amount)));
+        acct.exec1(keyHash, address(cb), 0, transferUsdData(amount));
+    }
+
+    function transferUsdData(uint256 amount) internal view returns (bytes memory) {
+        bytes memory pull = abi.encodeCall(IERC20.transferFrom, (address(acct), bob, amount));
+        return abi.encodeCall(CallbackTarget.run, (address(usd), pull));
     }
 
     function err(bytes4 selector) internal pure returns (bytes memory) {
