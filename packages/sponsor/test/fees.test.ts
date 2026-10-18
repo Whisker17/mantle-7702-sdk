@@ -7,6 +7,8 @@ import {
   encodeFunctionResult,
   type Hex,
   parseAbi,
+  serializeTransaction,
+  size,
 } from "viem";
 import { describe, expect, it } from "vitest";
 import { GAS_PRICE_ORACLE, type RawReceipt, receiptCost, relayerFeeBound } from "../src/fees.js";
@@ -46,7 +48,7 @@ const SPIKE = [
         },
       ],
     },
-    oracle: { size: 2075n, l1FeeUpperBound: 79_847n },
+    oracle: { size: 2076n, l1FeeUpperBound: 79_885n },
   },
   {
     kind: "session call",
@@ -67,7 +69,7 @@ const SPIKE = [
       maxFeePerGas: 100_010_000_000n,
       maxPriorityFeePerGas: 10_000_000n,
     },
-    oracle: { size: 859n, l1FeeUpperBound: 33_774n },
+    oracle: { size: 860n, l1FeeUpperBound: 33_812n },
   },
 ] as const;
 const OPERATOR_FEE_SCALAR = 100_000_000n;
@@ -80,8 +82,11 @@ const oracleAbi = parseAbi([
   "function tokenRatio() view returns (uint256)",
 ]);
 
-/** A client whose only chain is the oracle, answering with the recorded values. */
-function oracleClient(expectedSize: bigint, l1FeeUpperBound: bigint) {
+/**
+ * A client whose only chain is the oracle, answering with the recorded values; it records in
+ * `asked` the sizes `getL1FeeUpperBound` was called with.
+ */
+function oracleClient(l1FeeUpperBound: bigint, asked: bigint[]) {
   return createClient({
     chain: mantleSepolia,
     transport: custom({
@@ -97,7 +102,7 @@ function oracleClient(expectedSize: bigint, l1FeeUpperBound: bigint) {
           tokenRatio: TOKEN_RATIO,
           getL1FeeUpperBound: l1FeeUpperBound,
         }[functionName];
-        if (functionName === "getL1FeeUpperBound") expect(args?.[0]).toBe(expectedSize);
+        if (functionName === "getL1FeeUpperBound") asked.push(args?.[0] as bigint);
         return encodeFunctionResult({ abi: oracleAbi, functionName, result: value } as never);
       },
     }),
@@ -121,19 +126,25 @@ describe("receiptCost", () => {
   });
 });
 
+/** The spike's relayer transaction, with calldata of its recorded length. */
+function spikeTx({ tx: { dataBytes, ...rest } }: (typeof SPIKE)[number]) {
+  return {
+    ...rest,
+    to: rest.to as Address,
+    data: `0x${"11".repeat(dataBytes)}` as Hex,
+    ...("authorizationList" in rest
+      ? { authorizationList: rest.authorizationList.map((a) => ({ ...a })) }
+      : {}),
+  } as Parameters<typeof relayerFeeBound>[2];
+}
+
 describe("relayerFeeBound", () => {
   it.each(SPIKE)("bounds the spike's $kind as docs/infra.md §5 states", async (spike) => {
-    const { dataBytes, ...rest } = spike.tx;
-    const tx = {
-      ...rest,
-      to: rest.to as Address,
-      data: `0x${"11".repeat(dataBytes)}` as Hex,
-      ...("authorizationList" in rest
-        ? { authorizationList: rest.authorizationList.map((a) => ({ ...a })) }
-        : {}),
-    } as Parameters<typeof relayerFeeBound>[2];
-    const { size, l1FeeUpperBound } = spike.oracle;
-    const bound = await relayerFeeBound(oracleClient(size, l1FeeUpperBound), 5003, tx);
+    const tx = spikeTx(spike);
+    const { l1FeeUpperBound } = spike.oracle;
+    const asked: bigint[] = [];
+    const bound = await relayerFeeBound(oracleClient(l1FeeUpperBound, asked), 5003, tx);
+    expect(asked).toEqual([spike.oracle.size]);
     // gasLimit × (maxFeePerGas + operatorFeeScalar × 100) + operatorFeeConstant
     //   + tokenRatio × getL1FeeUpperBound(size)
     expect(bound).toBe(
@@ -143,4 +154,18 @@ describe("relayerFeeBound", () => {
     // The L1 part alone covers the L1 fee the receipt charged.
     expect(TOKEN_RATIO * l1FeeUpperBound).toBeGreaterThanOrEqual(BigInt(spike.receipt.l1Fee));
   });
+
+  it.each(SPIKE)(
+    "sizes the spike's $kind at least as large as at any nonce, up to 2^64 − 1",
+    async (spike) => {
+      const tx = spikeTx(spike);
+      const asked: bigint[] = [];
+      await relayerFeeBound(oracleClient(spike.oracle.l1FeeUpperBound, asked), 5003, tx);
+      const type = tx.authorizationList ? "eip7702" : "eip1559";
+      for (const nonce of [0, 2 ** 32, Number.MAX_SAFE_INTEGER, 2n ** 64n - 1n]) {
+        const unsigned = serializeTransaction({ chainId: 5003, nonce, ...tx, type } as never);
+        expect(asked[0]).toBeGreaterThanOrEqual(BigInt(size(unsigned)));
+      }
+    },
+  );
 });

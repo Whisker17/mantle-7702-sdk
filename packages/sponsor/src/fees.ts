@@ -37,7 +37,8 @@ export interface RelayerTransaction {
  *     + tokenRatio × GasPriceOracle.getL1FeeUpperBound(unsigned size)
  *
  * The oracle's scalars are read now, since they are system-configured. The size is that of the
- * unsigned transaction with the largest nonce the relayer can have.
+ * unsigned transaction with the largest nonce a transaction can carry (uint64), whose RLP encoding
+ * is the longest of any nonce.
  */
 export async function relayerFeeBound(
   client: Client,
@@ -46,7 +47,7 @@ export async function relayerFeeBound(
 ): Promise<bigint> {
   const unsigned = serializeTransaction({
     chainId,
-    nonce: Number.MAX_SAFE_INTEGER,
+    nonce: 2n ** 64n - 1n,
     ...tx,
     type: tx.authorizationList ? "eip7702" : "eip1559",
   } as never);
