@@ -86,7 +86,7 @@ contract AgentPolicyHookManagementTest is AgentPolicyHookTestBase {
         (Policy memory p, uint40 anchor) = hook.getPolicy(K1, address(acct));
         assertEq(anchor, T0);
         assertEq(p.quoteLimits[0].token, address(usd));
-        assertEq(p.permissions.length, 8);
+        assertEq(p.permissions.length, 7);
         assertEq(hook.activeSessions(address(acct)), 1);
     }
 
@@ -474,6 +474,84 @@ contract AgentPolicyHookManagementTest is AgentPolicyHookTestBase {
 
     function test_validity_rejectsIncreaseAllowancePermission() public {
         _expectRuleMismatch(address(usd), hook.INCREASE_ALLOWANCE_SELECTOR(), RuleKind.NONE);
+    }
+
+    // ---------------- quote assets: exact approve only (I5, I13) ----------------
+
+    function test_validity_quoteAssetApproveOnly_acceptsApproveBuySellAndExecutes() public {
+        grant(K1, defaultPolicy());
+        approveAndBuy(K1, address(meme), 100e18);
+        sell(K1, address(meme), 100e18);
+        assertEq(hook.getSpent(K1, address(acct), address(usd)).total, 100e18);
+        assertEq(hook.inventory(K1, address(acct), address(meme)), 0);
+    }
+
+    function test_validity_rejectsQuoteAssetTransfer() public {
+        _expectQuoteNotApprove(IERC20.transfer.selector, RuleKind.NONE, false);
+        _expectQuoteNotApprove(IERC20.transfer.selector, RuleKind.NONE, true);
+    }
+
+    function test_validity_rejectsQuoteAssetTransferFrom() public {
+        _expectQuoteNotApprove(IERC20.transferFrom.selector, RuleKind.NONE, false);
+        _expectQuoteNotApprove(IERC20.transferFrom.selector, RuleKind.NONE, true);
+    }
+
+    function test_validity_rejectsQuoteAssetIncreaseApproval() public {
+        bytes4 sel = bytes4(keccak256("increaseApproval(address,uint256)"));
+        _expectQuoteNotApprove(sel, RuleKind.NONE, false);
+        _expectQuoteNotApprove(sel, RuleKind.NONE, true);
+    }
+
+    function test_validity_rejectsQuoteAssetArbitrarySelector() public {
+        _expectQuoteNotApprove(bytes4(0xdeadbeef), RuleKind.NONE, false);
+        _expectQuoteNotApprove(bytes4(0xdeadbeef), RuleKind.NONE, true);
+        // Plain call (empty calldata / fallback) on the quote asset.
+        _expectQuoteNotApprove(bytes4(0), RuleKind.NONE, false);
+        _expectQuoteNotApprove(bytes4(0), RuleKind.NONE, true);
+    }
+
+    function test_validity_rejectsTradeRuleOnQuoteAsset() public {
+        _expectQuoteNotApprove(ILaunchpad.sell.selector, RuleKind.LAUNCHPAD_SELL, false);
+        _expectQuoteNotApprove(ILaunchpad.buy.selector, RuleKind.LAUNCHPAD_BUY, true);
+    }
+
+    function test_validity_increaseAllowanceOnQuoteAssetStillRuleMismatch() public {
+        _expectRuleMismatch(address(usd), hook.INCREASE_ALLOWANCE_SELECTOR(), RuleKind.NONE);
+    }
+
+    /// @dev A NONE permission on a non-quote token is out of this rule's scope, but it cannot be
+    ///      kept once an update makes that token a quote asset.
+    function test_updatePolicy_cannotTurnTokenWithPermissionIntoQuoteAsset() public {
+        Policy memory p = defaultPolicy();
+        p.permissions[3] = CallPermission(address(usdt), IERC20.transfer.selector, RuleKind.NONE);
+        grant(K1, p);
+        p.quoteLimits = new QuoteLimit[](2);
+        p.quoteLimits[0] = QuoteLimit(address(usd), 1000e18, 400e18);
+        p.quoteLimits[1] = QuoteLimit(address(usdt), 1, 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAgentPolicyHook.QuoteAssetPermissionNotApprove.selector,
+                address(usdt),
+                IERC20.transfer.selector
+            )
+        );
+        update(K1, p);
+    }
+
+    /// @dev Adds `(usd, selector, kind)` and expects the quote-asset rule to reject it, through
+    ///      `setPolicy` or (on an already granted key) `updatePolicy`.
+    function _expectQuoteNotApprove(bytes4 selector, RuleKind kind, bool viaUpdate) internal {
+        bytes32 keyHash = keccak256(abi.encode(selector, kind, viaUpdate));
+        if (viaUpdate) grant(keyHash, defaultPolicy());
+        Policy memory p = defaultPolicy();
+        p.permissions[3] = CallPermission(address(usd), selector, kind);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAgentPolicyHook.QuoteAssetPermissionNotApprove.selector, address(usd), selector
+            )
+        );
+        if (viaUpdate) update(keyHash, p);
+        else grant(keyHash, p);
     }
 
     function _expectRuleMismatch(address target, bytes4 selector, RuleKind kind) internal {

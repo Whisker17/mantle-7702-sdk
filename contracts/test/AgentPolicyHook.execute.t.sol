@@ -453,9 +453,13 @@ contract AgentPolicyHookExecuteTest is AgentPolicyHookTestBase {
         for (uint256 i; i < amounts.length; ++i) {
             if ((warps >> i) & 1 == 1) vm.warp(block.timestamp + DAY);
             uint256 amount = bound(amounts[i], 0, 500e18);
-            try acct.exec1(K1, address(usd), 0, abi.encodeCall(IERC20.transfer, (bob, amount))) {
+            uint256 left = hook.remainingLimit(K1, address(acct), address(usd));
+            try acct.exec1(K1, address(cb), 0, transferUsdData(amount)) {
+                assertLe(amount, left);
                 charged += amount;
-            } catch {}
+            } catch {
+                assertGt(amount, left); // only an over-limit outflow is refused
+            }
             Spent memory s = hook.getSpent(K1, address(acct), address(usd));
             assertEq(s.total, charged);
             assertLe(s.total, 1000e18);

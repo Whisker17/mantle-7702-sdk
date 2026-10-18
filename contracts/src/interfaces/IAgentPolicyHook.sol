@@ -90,6 +90,7 @@ interface IAgentPolicyHook is IHook {
     error MntLimitMissing();
     error RuleSelectorMismatch(address target, bytes4 selector, RuleKind ruleKind);
     error ApproveTargetNotQuote(address target);
+    error QuoteAssetPermissionNotApprove(address target, bytes4 selector);
     error LaunchpadQuoteNotLimited(address launchpad, address quoteToken);
     error QuoteAssetHasInventory(address token);
     error PeriodLengthChanged();
