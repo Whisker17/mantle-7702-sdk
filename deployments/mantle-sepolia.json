@@ -1,0 +1,41 @@
+{
+  "chainId": 5003,
+  "CaliburEntry": {
+    "address": "0x000000005c84F8Fd50b21CAC312528A64437030e",
+    "deployTx": "0x85d174a21461fe290a6fa88dfbbee7136d96b40061d9d12e627fef70638f1b10",
+    "block": 45377271,
+    "deployer": "0x7CB9103C9F2fB209BF63BaADB394dA182040f366",
+    "method": "create2-deterministic",
+    "factory": "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+    "salt": "0x3b55ce071a9e4ef8dd49e65ab8ba6c747bec4c1c5b8efc95909fb463c4e53396",
+    "initCodeHash": "0xd3a7ea2bc0c320de0cb9288c0a3f67e8e07f7982d99fdac28208501bd1e74149",
+    "runtimeCodeHash": "0xba697585ba58ba66ebd095ab4c7f980ed42ad115b2e3bb9b5b9bdf167bf08b1b",
+    "compiler": {
+      "solc": "0.8.29+commit.ab55807c",
+      "evmVersion": "cancun",
+      "optimizer": true,
+      "optimizerRuns": 1000,
+      "viaIr": true,
+      "bytecodeHash": "none",
+      "foundryProfile": "calibur"
+    },
+    "source": {
+      "submodule": "contracts/lib/calibur",
+      "repository": "https://github.com/Uniswap/calibur",
+      "tag": "v1.1.0",
+      "commit": "249cac5e880831d7b2de4111a5920dbf0d242846",
+      "contract": "src/CaliburEntry.sol:CaliburEntry"
+    },
+    "eip712Domain": {
+      "fields": "0x1f",
+      "name": "Calibur",
+      "version": "1.0.0",
+      "chainId": 5003,
+      "verifyingContract": "0x000000005c84F8Fd50b21CAC312528A64437030e",
+      "salt": "0x000000000000000000000000000000005c84f8fd50b21cac312528a64437030e",
+      "extensions": []
+    },
+    "canonicalAddressReproduced": true,
+    "canonicalAddressReason": "Init code built from v1.1.0 with Calibur's own settings (cancun, bytecode_hash none, via-IR) is byte-identical to the canonical deployment on Ethereum Sepolia (tx 0xdee40508af15b3534fbf993a9d89f256c6e19ea94900cd864981f54070aa8dff, same deterministic deployer and salt); runtime code hash equals the Ethereum Sepolia one. The README commit d7dbc80 is on upstream branch audit-main and its src/ is identical to v1.1.0."
+  }
+}
