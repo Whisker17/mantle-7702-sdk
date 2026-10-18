@@ -1,0 +1,598 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > account exec --release: root execution releasing session inventory 1`] = `
+{
+  "command": "account exec",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "hash": "<bytes32>",
+    "warnings": [],
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > account init --grant --agent: initialises with the first grant 1`] = `
+{
+  "command": "account init",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "hash": "<bytes32>",
+    "session": {
+      "address": "<address>",
+      "expiry": "<expiry>",
+      "hash": "<bytes32>",
+      "keyHash": "<bytes32>",
+      "keyfile": "trader-<address>.json",
+      "profile": "trader",
+    },
+    "state": "INITIALIZED",
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > account init: rejected for an account off the allowlist (20) 1`] = `
+{
+  "command": "account init",
+  "error": {
+    "code": "SPONSOR_REJECTED",
+    "message": "Init failed; the account is UNDELEGATED; retry init: SponsorRejectedError: Sponsor rejected the request: NOT_ALLOWLISTED (<address> is not allowlisted)",
+    "reason": "NOT_ALLOWLISTED",
+    "type": "SponsorRejectedError",
+  },
+  "exitCode": 20,
+  "ok": false,
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > account status: an initialised account with its sessions 1`] = `
+{
+  "command": "account status",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "authorizationNonce": "<authorizationNonce>",
+    "caliburNonce": "<caliburNonce>",
+    "inventory": [
+      {
+        "balance": "10000000000000000000000",
+        "reserved": "9999999999999999999999",
+        "token": "<address>",
+        "unallocated": "1",
+      },
+    ],
+    "sessions": [
+      {
+        "anchor": "<anchor>",
+        "expiry": "<expiry>",
+        "hook": "<address>",
+        "hooked": true,
+        "inventory": [
+          {
+            "amount": "9999999999999999999999",
+            "token": "<address>",
+          },
+        ],
+        "isAdmin": false,
+        "keyHash": "<bytes32>",
+        "policy": {
+          "maxDeadlineWindow": 600,
+          "maxValuePerCall": "0",
+          "mntLimit": {
+            "periodCap": "0",
+            "token": "0x0000000000000000000000000000000000000000",
+            "totalCap": "0",
+          },
+          "periodLength": 86400,
+          "permissions": [
+            {
+              "ruleKind": 1,
+              "selector": "0x095ea7b3",
+              "target": "<address>",
+            },
+            {
+              "ruleKind": 2,
+              "selector": "0x9f01c7de",
+              "target": "<address>",
+            },
+            {
+              "ruleKind": 3,
+              "selector": "0x1d87be21",
+              "target": "<address>",
+            },
+          ],
+          "quoteLimits": [
+            {
+              "periodCap": "400000000",
+              "token": "<address>",
+              "totalCap": "900000000",
+            },
+          ],
+          "trustedSpenders": [
+            "<address>",
+          ],
+        },
+        "profile": "trader.v1",
+        "registered": true,
+        "remaining": [
+          {
+            "amount": "390000000",
+            "token": "<address>",
+          },
+        ],
+        "summary": {
+          "active": true,
+          "initialized": true,
+          "revoked": false,
+        },
+      },
+      {
+        "anchor": "<anchor>",
+        "expiry": "<expiry>",
+        "hook": "0x0000000000000000000000000000000000000000",
+        "hooked": false,
+        "inventory": [
+          {
+            "amount": "0",
+            "token": "<address>",
+          },
+        ],
+        "isAdmin": false,
+        "keyHash": "<bytes32>",
+        "policy": {
+          "maxDeadlineWindow": 600,
+          "maxValuePerCall": "0",
+          "mntLimit": {
+            "periodCap": "0",
+            "token": "0x0000000000000000000000000000000000000000",
+            "totalCap": "0",
+          },
+          "periodLength": 86400,
+          "permissions": [
+            {
+              "ruleKind": 1,
+              "selector": "0x095ea7b3",
+              "target": "<address>",
+            },
+            {
+              "ruleKind": 2,
+              "selector": "0x9f01c7de",
+              "target": "<address>",
+            },
+            {
+              "ruleKind": 3,
+              "selector": "0x1d87be21",
+              "target": "<address>",
+            },
+          ],
+          "quoteLimits": [
+            {
+              "periodCap": "500000000",
+              "token": "<address>",
+              "totalCap": "1000000000",
+            },
+          ],
+          "trustedSpenders": [
+            "<address>",
+          ],
+        },
+        "profile": "trader",
+        "registered": false,
+        "remaining": [
+          {
+            "amount": "500000000",
+            "token": "<address>",
+          },
+        ],
+        "summary": {
+          "active": false,
+          "initialized": true,
+          "revoked": true,
+        },
+      },
+    ],
+    "state": "INITIALIZED",
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > account status: an undelegated account 1`] = `
+{
+  "command": "account status",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "authorizationNonce": "<authorizationNonce>",
+    "caliburNonce": "<caliburNonce>",
+    "inventory": [
+      {
+        "balance": "0",
+        "reserved": "0",
+        "token": "<address>",
+        "unallocated": "0",
+      },
+    ],
+    "sessions": [],
+    "state": "UNDELEGATED",
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > agent exec: a call outside the allowlist (10) 1`] = `
+{
+  "command": "agent exec",
+  "error": {
+    "callIndex": 0,
+    "code": "POLICY_VIOLATION",
+    "message": "Call 0: <address> 0xa9059cbb is not a permitted call",
+    "reason": "<address> 0xa9059cbb is not a permitted call",
+    "type": "PolicyViolationError",
+  },
+  "exitCode": 10,
+  "ok": false,
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > agent exec: approve + buy (0) 1`] = `
+{
+  "command": "agent exec",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "hash": "<bytes32>",
+    "keyHash": "<bytes32>",
+    "profile": "trader",
+    "success": true,
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > agent exec: selling more than the session's inventory (12) 1`] = `
+{
+  "command": "agent exec",
+  "error": {
+    "code": "INVENTORY_EXCEEDED",
+    "held": "10000000000000000000000",
+    "message": "Inventory of <address> exceeded: 1000000000000000000000000000000 requested, 10000000000000000000000 held",
+    "requested": "1000000000000000000000000000000",
+    "token": "<address>",
+    "type": "InventoryExceededError",
+  },
+  "exitCode": 12,
+  "ok": false,
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > agent simulate: a batch the chain reverts (30) 1`] = `
+{
+  "command": "agent simulate",
+  "error": {
+    "code": "EXECUTION_REVERTED",
+    "data": "0x3204506f",
+    "message": "Execution reverted: CallFailed()",
+    "reason": "CallFailed()",
+    "type": "ExecutionRevertedError",
+  },
+  "exitCode": 30,
+  "ok": false,
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > agent simulate: a passing batch (0) 1`] = `
+{
+  "command": "agent simulate",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "calls": 2,
+    "keyHash": "<bytes32>",
+    "profile": "trader",
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > agent simulate: an approve over the period cap (11) 1`] = `
+{
+  "command": "agent simulate",
+  "error": {
+    "asset": "<address>",
+    "code": "LIMIT_EXCEEDED",
+    "message": "Limit of <address> exceeded: 600000000 requested, 490000000 remaining",
+    "remaining": "490000000",
+    "requested": "600000000",
+    "type": "LimitExceededError",
+  },
+  "exitCode": 11,
+  "ok": false,
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > session grant: a new key and a new profile version 1`] = `
+{
+  "command": "session grant",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "address": "<address>",
+    "expiry": "<expiry>",
+    "hash": "<bytes32>",
+    "keyHash": "<bytes32>",
+    "keyfile": "trader-<address>.json",
+    "previousProfile": "trader.v1",
+    "profile": "trader",
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > session grant: a new key and a new profile version 2`] = `
+{
+  "command": "keys list",
+  "ok": true,
+  "result": {
+    "keys": [
+      {
+        "address": "<address>",
+        "keyfile": "root.json",
+      },
+      {
+        "address": "<address>",
+        "keyfile": "trader-<address>.json",
+      },
+      {
+        "address": "<address>",
+        "keyfile": "trader-<address>.json",
+      },
+    ],
+    "profiles": [
+      {
+        "account": "<address>",
+        "keyHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "keyfile": "root.json",
+        "name": "root",
+        "role": "root",
+      },
+      {
+        "account": "<address>",
+        "keyHash": "<bytes32>",
+        "keyfile": "trader-<address>.json",
+        "name": "trader",
+        "role": "agent",
+      },
+      {
+        "account": "<address>",
+        "keyHash": "<bytes32>",
+        "keyfile": "trader-<address>.json",
+        "name": "trader.v1",
+        "role": "agent",
+      },
+    ],
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > session list 1`] = `
+{
+  "command": "session list",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "sessions": [
+      {
+        "anchor": "<anchor>",
+        "expiry": "<expiry>",
+        "hook": "<address>",
+        "hooked": true,
+        "inventory": [
+          {
+            "amount": "10000000000000000000000",
+            "token": "<address>",
+          },
+        ],
+        "isAdmin": false,
+        "keyHash": "<bytes32>",
+        "policy": {
+          "maxDeadlineWindow": 600,
+          "maxValuePerCall": "0",
+          "mntLimit": {
+            "periodCap": "0",
+            "token": "0x0000000000000000000000000000000000000000",
+            "totalCap": "0",
+          },
+          "periodLength": 86400,
+          "permissions": [
+            {
+              "ruleKind": 1,
+              "selector": "0x095ea7b3",
+              "target": "<address>",
+            },
+            {
+              "ruleKind": 2,
+              "selector": "0x9f01c7de",
+              "target": "<address>",
+            },
+            {
+              "ruleKind": 3,
+              "selector": "0x1d87be21",
+              "target": "<address>",
+            },
+          ],
+          "quoteLimits": [
+            {
+              "periodCap": "500000000",
+              "token": "<address>",
+              "totalCap": "1000000000",
+            },
+          ],
+          "trustedSpenders": [
+            "<address>",
+          ],
+        },
+        "profile": "trader",
+        "registered": true,
+        "remaining": [
+          {
+            "amount": "490000000",
+            "token": "<address>",
+          },
+        ],
+        "summary": {
+          "active": true,
+          "initialized": true,
+          "revoked": false,
+        },
+      },
+    ],
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > session revoke, then agent exec with the revoked key (13) 1`] = `
+{
+  "command": "session revoke",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "hash": "<bytes32>",
+    "keyHash": "<bytes32>",
+    "profile": "trader",
+    "resetAllowances": [
+      {
+        "spender": "<address>",
+        "token": "<address>",
+      },
+    ],
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > session revoke, then agent exec with the revoked key (13) 2`] = `
+{
+  "command": "agent exec",
+  "error": {
+    "code": "KEY_EXPIRED_OR_REVOKED",
+    "message": "Session key is not registered on the account",
+    "reason": "Session key is not registered on the account",
+    "type": "PolicyViolationError",
+  },
+  "exitCode": 13,
+  "ok": false,
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > session update: lowers the caps 1`] = `
+{
+  "command": "session update",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "hash": "<bytes32>",
+    "keyHash": "<bytes32>",
+    "profile": "trader",
+    "resetAllowances": [],
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > sponsor relayer status|bump|cancel on a pending transaction; busy (21) and cancelled (20) > bump 1`] = `
+{
+  "command": "sponsor relayer bump",
+  "ok": true,
+  "result": {
+    "hash": "<bytes32>",
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > sponsor relayer status|bump|cancel on a pending transaction; busy (21) and cancelled (20) > busy 1`] = `
+{
+  "command": "account exec",
+  "error": {
+    "code": "SPONSOR_BUSY",
+    "message": "Sponsor is busy with this account's pending transaction; retry later",
+    "type": "SponsorBusyError",
+  },
+  "exitCode": 21,
+  "ok": false,
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > sponsor relayer status|bump|cancel on a pending transaction; busy (21) and cancelled (20) > cancel 1`] = `
+{
+  "command": "sponsor relayer cancel",
+  "ok": true,
+  "result": {
+    "hash": "<bytes32>",
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > sponsor relayer status|bump|cancel on a pending transaction; busy (21) and cancelled (20) > cancelled 1`] = `
+{
+  "command": "agent exec",
+  "error": {
+    "code": "SPONSOR_REJECTED",
+    "message": "Sponsor rejected the request: CANCELLED",
+    "reason": "CANCELLED",
+    "type": "SponsorRejectedError",
+  },
+  "exitCode": 20,
+  "ok": false,
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > sponsor relayer status|bump|cancel on a pending transaction; busy (21) and cancelled (20) > status 1`] = `
+{
+  "command": "sponsor relayer status",
+  "ok": true,
+  "result": {
+    "latest": "<latest>",
+    "nextNonce": "<nextNonce>",
+    "open": [
+      {
+        "account": "<address>",
+        "attempts": [
+          {
+            "digest": "<bytes32>",
+            "hash": "<bytes32>",
+            "kind": "submit",
+            "maxFeePerGas": "<maxFeePerGas>",
+            "maxPriorityFeePerGas": "<maxPriorityFeePerGas>",
+            "nonce": "<nonce>",
+            "relayer": "<address>",
+          },
+        ],
+        "batchDigest": "<bytes32>",
+        "budgetClass": "business",
+        "charged": {
+          "fee": "<fee>",
+          "gas": "<gas>",
+        },
+        "day": "<day>",
+        "digest": "<bytes32>",
+        "error": null,
+        "nonce": "<nonce>",
+        "reserved": {
+          "fee": "<fee>",
+          "gas": "<gas>",
+        },
+        "result": null,
+        "state": "submitted",
+      },
+    ],
+    "pending": "<pending>",
+    "relayer": "<address>",
+  },
+}
+`;
+
+exports[`the mantle-aa CLI on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve) > sponsor serve: listens and prints its URL and relayer 1`] = `
+{
+  "command": "sponsor serve",
+  "ok": true,
+  "result": {
+    "relayer": "<address>",
+    "url": "<local-url>",
+  },
+}
+`;

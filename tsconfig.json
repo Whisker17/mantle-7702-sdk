@@ -4,7 +4,8 @@
     "noEmit": true,
     "types": ["node"],
     "paths": {
-      "@mantle-aa/sdk": ["./packages/sdk/src/index.ts"]
+      "@mantle-aa/sdk": ["./packages/sdk/src/index.ts"],
+      "@mantle-aa/sponsor": ["./packages/sponsor/src/index.ts"]
     }
   },
   "include": [
