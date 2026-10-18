@@ -248,7 +248,6 @@ function bundlerRun(mode: Mode) {
   let checker: Awaited<ReturnType<typeof startEmbeddedSponsor>> | undefined;
 
   let stack: BundlerStack;
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
   let client: BundlerStack["client"];
   let account: Address;
   /** The sponsor's paymaster service, reached without the SDK's pre-check. */
@@ -263,6 +262,9 @@ function bundlerRun(mode: Mode) {
   const attacker = () =>
     createWalletClient({ account: ATTACKER, chain: mantleSepolia, transport: http(stack.rpcUrl) });
   const now = async () => (await client.getBlock()).timestamp;
+  /** A transaction's receipt; polled every 250 ms (viem's default is 4 s; a block comes each second). */
+  const mined = (hash: Hex) =>
+    client.waitForTransactionReceipt({ hash, timeout: 30_000, pollingInterval: 250 });
   const bundleTxs = () => client.getTransactionCount({ address: stack.bundler.executor });
   const epNonce = (key: bigint) =>
     client.readContract({
@@ -498,7 +500,7 @@ function bundlerRun(mode: Mode) {
       (e: unknown) => failedOp(revertData(e)),
     );
     const hash = await attacker().sendTransaction({ to: EP, data, gas: 5_000_000n });
-    const receipt = await client.waitForTransactionReceipt({ hash, timeout: 30_000 });
+    const receipt = await mined(hash);
     if (failed) {
       expect(receipt.status).toBe("reverted");
       return failed;
@@ -541,7 +543,7 @@ function bundlerRun(mode: Mode) {
       (e: unknown) => revertName(revertData(e)),
     );
     const hash = await attacker().sendTransaction({ to: account, data, gas: 3_000_000n });
-    const receipt = await client.waitForTransactionReceipt({ hash, timeout: 30_000 });
+    const receipt = await mined(hash);
     expect(receipt.status).toBe(reason === "success" ? "success" : "reverted");
     return reason;
   }
@@ -566,11 +568,14 @@ function bundlerRun(mode: Mode) {
   beforeAll(async () => {
     stack = await startBundlerStack(rpcUrl as string);
     client = stack.client;
-    // An empty block every second besides the automined ones, as a live chain keeps producing.
-    // Alto frees its one executor wallet only when a new block shows its bundle included; on a quiet
-    // fork a bundle it has not yet seen included keeps the wallet, and the next
-    // eth_sendUserOperation then waits for it without bound (its validation needs the wallet).
-    heartbeat = setInterval(() => void client.mine({ blocks: 1 }).catch(() => undefined), 1_000);
+    // Interval mining, a block every second, as on a live chain: Alto is built for a chain that
+    // keeps producing blocks. On an automining fork it stalls: it frees its one executor wallet
+    // only when a new block shows its bundle included, so on a quiet chain the next
+    // eth_sendUserOperation can wait for that wallet without bound (measured: 30 s while a bundle
+    // sat unmined, answered within 1 s of the next block); and its bundle transaction is mined
+    // inside eth_sendRawTransaction, which on a slow runner outlasted its 10 s RPC bound three
+    // times, after which it kept re-validating the op without dropping it.
+    await client.setIntervalMining({ interval: 1 });
     await setPaymasterSigner(client, PAYMASTER, paymasterSigner.address);
     // Warm the fresh fork and Alto with a throwaway root init UserOp, as the smoke test lands one.
     // The first UserOp on a fork fetches its state from the upstream RPC: on a slow runner that
@@ -672,14 +677,13 @@ function bundlerRun(mode: Mode) {
       },
     ] as const) {
       const hash = await attacker().writeContract(request as never);
-      const receipt = await client.waitForTransactionReceipt({ hash, timeout: 30_000 });
+      const receipt = await mined(hash);
       expect(receipt.status).toBe("success");
     }
     expect(await balanceOf(MEME)).toBe(HUMAN_MEME);
   }, 420_000);
 
   afterAll(async () => {
-    clearInterval(heartbeat);
     abort.abort();
     await serving;
     await checker?.close();
@@ -711,7 +715,7 @@ function bundlerRun(mode: Mode) {
         functionName: "mint",
         args: [account, usd(200)],
       });
-      await client.waitForTransactionReceipt({ hash, timeout: 30_000 });
+      await mined(hash);
     },
     STEP_MS,
   );
@@ -1040,7 +1044,7 @@ function bundlerRun(mode: Mode) {
             args: [clone],
             value: parseEther("1"),
           });
-          await client.waitForTransactionReceipt({ hash, timeout: 30_000 });
+          await mined(hash);
           const human = loadProfileSigner("human", keystore);
           expect(
             await handleOps(

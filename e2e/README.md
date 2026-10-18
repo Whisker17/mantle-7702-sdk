@@ -53,10 +53,13 @@ with `alto/safe-validator.patch`. Alto's whole dependency tree is pinned by
   and Alto and swaps the deployed VerifyingPaymaster's signer for the sponsor's key, so the root's
   init UserOp (2-byte `0x7702` initCode) and every session UserOp land through the deployed
   paymaster code. Same fixture, policy and 0-MNT assertions as the relayer suite; the account's
-  EntryPoint deposit also stays 0. The fork mines an empty block every second besides its automined
-  ones, as a live chain keeps producing: Alto releases its executor wallet only on a new block that
-  shows its bundle included, and until then an `eth_sendUserOperation` waits for that wallet
-  without bound (measured: 30 s while a bundle sat unmined, answered within 1 s of the next block).
+  EntryPoint deposit also stays 0. The fork mines a block every second (interval mining), as a live
+  chain does: on an automining fork Alto stalls. It releases its executor wallet only on a new block
+  that shows its bundle included, so on a quiet chain an `eth_sendUserOperation` can wait for that
+  wallet without bound (measured: 30 s while a bundle sat unmined, answered within 1 s of the next
+  block); and on a slow runner its bundle transaction, mined inside `eth_sendRawTransaction`,
+  outlasted its 10 s RPC bound three times, after which it re-validated the op endlessly without
+  dropping it (Alto 0.0.21) and the failures throttled the paymaster's reputation.
   - Every overreach is refused three times: by `agent exec` (nothing reaches the bundler), by the
     sponsor's paymaster service for a request built without the pre-check, and on chain: the test
     signs the session UserOp with the session key, signs its paymaster data itself with the swapped
