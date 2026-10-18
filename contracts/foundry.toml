@@ -14,6 +14,12 @@ optimizer_runs = 1000
 additional_compiler_profiles = [{ name = "via_ir", via_ir = true, optimizer_runs = 1000 }]
 compilation_restrictions = [{ paths = "lib/calibur/src/ERC7739.sol", via_ir = true }]
 
+# Stateful invariant suites (test/invariant/, DESIGN §9): CI runs them under the fixed seeds
+# 0x1, 0x2, 0x3 (FOUNDRY_FUZZ_SEED), so a failure is reproducible by seed.
+[profile.default.invariant]
+runs = 512
+depth = 64
+
 # Reproduces the canonical CaliburEntry bytecode (lib/calibur/foundry.toml: cancun, no metadata
 # hash); used only by script/DeployCalibur.s.sol. Separate output so it never mixes with default.
 [profile.calibur]
