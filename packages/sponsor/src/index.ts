@@ -2,6 +2,7 @@ export const PACKAGE_NAME = "@mantle-aa/sponsor";
 
 export * from "./auth.js";
 export * from "./config.js";
+export * from "./embedded.js";
 export * from "./fees.js";
 export * from "./ledger.js";
 export * from "./policy.js";

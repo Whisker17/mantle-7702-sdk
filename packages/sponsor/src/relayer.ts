@@ -14,10 +14,10 @@ import type { RelayerTransaction } from "./fees.js";
 
 /**
  * The relayer account from the environment variable the config names (`relayerKey: ${VAR}`). It
- * must be the configured `relayer`. Errors never contain the key.
+ * must be the configured `relayer`, when one is given. Errors never contain the key.
  */
 export function loadRelayerAccount(
-  config: Pick<SponsorConfig, "relayer" | "relayerKeyEnv">,
+  config: Partial<Pick<SponsorConfig, "relayer" | "relayerKeyEnv">>,
   env: NodeJS.ProcessEnv = process.env,
 ): LocalAccount {
   const name = config.relayerKeyEnv;
@@ -27,7 +27,7 @@ export function loadRelayerAccount(
     throw new Error(`${name} must hold the relayer's 32-byte hex private key`);
   }
   const account = privateKeyToAccount(key);
-  if (account.address !== config.relayer) {
+  if (config.relayer && account.address !== config.relayer) {
     throw new Error(`${name} is the key of ${account.address}, not of relayer ${config.relayer}`);
   }
   return account;
