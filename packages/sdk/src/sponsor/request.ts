@@ -2,18 +2,22 @@ import {
   type Address,
   decodeFunctionData,
   encodeAbiParameters,
-  getAddress,
   type Hex,
-  hashTypedData,
-  isAddress,
-  isHex,
   keccak256,
   recoverMessageAddress,
   type SignedAuthorization,
-  size,
 } from "viem";
 import { caliburAbi } from "../account/abi.js";
 import type { Signer } from "../signer.js";
+import {
+  address,
+  authorizationList,
+  authorizationTuple,
+  hex,
+  object,
+  sponsorRequestDigest,
+  uint,
+} from "./wire.js";
 
 /**
  * The `sponsor_relay` wire request and its request digest (docs/DESIGN.md §5.2).
@@ -37,8 +41,7 @@ import type { Signer } from "../signer.js";
  * digest, so it can never be mistaken for the raw EIP-712 signature Calibur checks on the batch.
  */
 
-export const SPONSOR_DOMAIN_NAME = "MantleAA Sponsor";
-export const SPONSOR_DOMAIN_VERSION = "1";
+export { SPONSOR_DOMAIN_NAME, SPONSOR_DOMAIN_VERSION } from "./wire.js";
 export const SPONSOR_RELAY_METHOD = "sponsor_relay";
 
 /** Proves who sent the request, to which sponsor and chain, and for how long it is valid. */
@@ -76,11 +79,14 @@ export type UnsignedRelayRequest = Omit<RelayRequest, "auth"> & {
  * `{ code: SPONSOR_REJECTED_RPC_CODE, message, data: { reason, detail } }`.
  */
 export const SponsorRejectCode = {
-  /** The params are malformed or the calldata is not `execute(SignedBatchedCall, bytes)`. */
+  /**
+   * The params are malformed, or the calldata is not `execute(SignedBatchedCall, bytes)` (a UserOp's
+   * not `executeUserOp.selector ‖ abi.encode(BatchedCall)`).
+   */
   INVALID_PARAMS: "INVALID_PARAMS",
   /** The request (or its authorization) names another chain. */
   WRONG_CHAIN: "WRONG_CHAIN",
-  /** The request names another sponsor or another CaliburEntry. */
+  /** The request names another sponsor, another CaliburEntry, or (a UserOp) another EntryPoint. */
   WRONG_DOMAIN: "WRONG_DOMAIN",
   /** Now is outside `[validAfter, validUntil]`, or the window is longer than the sponsor allows. */
   REQUEST_EXPIRED: "REQUEST_EXPIRED",
@@ -90,7 +96,7 @@ export const SponsorRejectCode = {
   NOT_ALLOWLISTED: "NOT_ALLOWLISTED",
   /** A session request on the root lane 0. */
   ROOT_LANE_MISUSE: "ROOT_LANE_MISUSE",
-  /** The batch nonce's lane is not the authenticated key's lane. */
+  /** The batch nonce's (a UserOp's EntryPoint nonce key's) lane is not the authenticated key's lane. */
   WRONG_LANE: "WRONG_LANE",
   /** The batch's executor is not the sponsor's relayer (executor 0, "anyone", included). */
   WRONG_EXECUTOR: "WRONG_EXECUTOR",
@@ -98,6 +104,11 @@ export const SponsorRejectCode = {
   BAD_BATCH_SIGNATURE: "BAD_BATCH_SIGNATURE",
   /** The authorization is misplaced (session) or does not delegate the sender to CaliburEntry now. */
   AUTHORIZATION_INVALID: "AUTHORIZATION_INVALID",
+  /**
+   * The UserOp's initCode is not the one its key may carry: the 2-byte EIP-7702 marker `0x7702`
+   * exactly when the root's init carries `eip7702Auth`, otherwise empty (session UserOps always).
+   */
+  INIT_CODE_INVALID: "INIT_CODE_INVALID",
   /** The account is neither delegated to CaliburEntry nor delegating with this request. */
   ACCOUNT_NOT_DELEGATED: "ACCOUNT_NOT_DELEGATED",
   /** A session request for an account whose safe initialisation is incomplete. */
@@ -121,8 +132,9 @@ export const SponsorRejectCode = {
   /** A management request would exceed the global daily budget. */
   MANAGEMENT_BUDGET: "MANAGEMENT_BUDGET",
   /**
-   * The request passed every check but this sponsor could not submit it: it has no relayer, the
-   * node refused the transaction, or its relayer nonce was consumed by another transaction.
+   * The request passed every check but this sponsor could not submit it: it has no relayer (no
+   * paymaster signer, for the `pm_*` methods), the node refused the transaction, or its relayer
+   * nonce was consumed by another transaction.
    */
   SUBMISSION_UNAVAILABLE: "SUBMISSION_UNAVAILABLE",
   /** The account already has a request in flight (at most one per account); retry once it settles. */
@@ -152,30 +164,6 @@ export interface RelayResult {
 /** JSON-RPC error code of a sponsor rejection; `data` is `{ reason: SponsorRejectCode, detail }`. */
 export const SPONSOR_REJECTED_RPC_CODE = -32010;
 
-const requestTypes = {
-  SponsorRequest: [
-    { name: "method", type: "string" },
-    { name: "sender", type: "address" },
-    { name: "keyHash", type: "bytes32" },
-    { name: "entry", type: "address" },
-    { name: "payloadHash", type: "bytes32" },
-    { name: "validAfter", type: "uint64" },
-    { name: "validUntil", type: "uint64" },
-  ],
-} as const;
-
-const authorizationTuple = {
-  type: "tuple[]",
-  components: [
-    { name: "address", type: "address" },
-    { name: "chainId", type: "uint256" },
-    { name: "nonce", type: "uint256" },
-    { name: "yParity", type: "uint8" },
-    { name: "r", type: "bytes32" },
-    { name: "s", type: "bytes32" },
-  ],
-} as const;
-
 /** The SignedBatchedCall and wrapped signature of `execute` calldata; throws on anything else. */
 export function decodeExecute(data: Hex) {
   const { functionName, args } = decodeFunctionData({ abi: caliburAbi, data });
@@ -188,45 +176,22 @@ export function decodeExecute(data: Hex) {
 
 /** The request digest every `sponsor_relay` request is signed over (see the module comment). */
 export function relayRequestDigest(request: UnsignedRelayRequest): Hex {
-  const { auth, authorization: a } = request;
-  const payloadHash = keccak256(
-    encodeAbiParameters(
-      [{ type: "bytes" }, authorizationTuple],
-      [
-        request.data,
-        a
-          ? [
-              {
-                address: a.address,
-                chainId: BigInt(a.chainId),
-                nonce: BigInt(a.nonce),
-                yParity: a.yParity ?? 0,
-                r: a.r,
-                s: a.s,
-              },
-            ]
-          : [],
-      ],
+  const { auth } = request;
+  return sponsorRequestDigest({
+    chainId: auth.chainId,
+    sponsor: auth.sponsor,
+    method: SPONSOR_RELAY_METHOD,
+    sender: request.sender,
+    keyHash: decodeExecute(request.data).signedBatchedCall.keyHash,
+    entry: auth.entry,
+    payloadHash: keccak256(
+      encodeAbiParameters(
+        [{ type: "bytes" }, authorizationTuple],
+        [request.data, authorizationList(request.authorization)],
+      ),
     ),
-  );
-  return hashTypedData({
-    domain: {
-      name: SPONSOR_DOMAIN_NAME,
-      version: SPONSOR_DOMAIN_VERSION,
-      chainId: auth.chainId,
-      verifyingContract: auth.sponsor,
-    },
-    types: requestTypes,
-    primaryType: "SponsorRequest",
-    message: {
-      method: SPONSOR_RELAY_METHOD,
-      sender: request.sender,
-      keyHash: decodeExecute(request.data).signedBatchedCall.keyHash,
-      entry: auth.entry,
-      payloadHash,
-      validAfter: BigInt(auth.validAfter),
-      validUntil: BigInt(auth.validUntil),
-    },
+    validAfter: auth.validAfter,
+    validUntil: auth.validUntil,
   });
 }
 
@@ -276,34 +241,4 @@ export function parseRelayRequest(params: unknown): RelayRequest {
     };
   }
   return request;
-}
-
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function address(value: unknown, field: string): Address {
-  if (typeof value !== "string" || !isAddress(value, { strict: false })) {
-    throw new Error(`${field} must be an address`);
-  }
-  return getAddress(value);
-}
-
-function hex(value: unknown, field: string, bytes?: number): Hex {
-  if (typeof value !== "string" || !isHex(value, { strict: true }) || value.length % 2 !== 0) {
-    throw new Error(`${field} must be 0x-prefixed hex bytes`);
-  }
-  if (bytes !== undefined && size(value) !== bytes)
-    throw new Error(`${field} must be ${bytes} bytes`);
-  return value.toLowerCase() as Hex;
-}
-
-function uint(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`${field} must be a non-negative safe integer`);
-  }
-  return value;
 }
