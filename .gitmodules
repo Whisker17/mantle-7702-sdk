@@ -1,0 +1,9 @@
+[submodule "contracts/lib/calibur"]
+	path = contracts/lib/calibur
+	url = https://github.com/Uniswap/calibur.git
+[submodule "contracts/lib/account-abstraction"]
+	path = contracts/lib/account-abstraction
+	url = https://github.com/eth-infinitism/account-abstraction.git
+[submodule "contracts/lib/forge-std"]
+	path = contracts/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std.git

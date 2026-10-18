@@ -178,10 +178,18 @@ mark-to-market loss can far exceed its quote limit); the fairness of execution p
   `(sender, authenticated keyHash, nonce lane)` agree and accepts no session request on
   the root lane**; otherwise it rejects with a structured error. Re-submitting the same
   intent through the other path is not idempotent on chain.
+- **Bundler path and `eip7702Auth`.** Only the root's init UserOp may carry `eip7702Auth`;
+  session UserOps never do and target already-delegated accounts (§7.1).
 - **Deployment.** Through the CREATE2 deterministic deployer; reproducing the canonical
   address `0x000000005c84F8Fd50b21CAC312528A64437030e` (checked against the runtime code at
   that address on Ethereum Sepolia) is **time-boxed to one hour**; on failure our own
-  address is used, which is a normal outcome.
+  address is used, which is a normal outcome. **Measured (0.1.0):** CaliburEntry v1.1.0 was
+  reproduced at the canonical address on Mantle Sepolia with Calibur's own compiler settings
+  (cancun, `bytecode_hash = none`, via-IR; `contracts/foundry.toml` profile `calibur`); its
+  init code is byte-identical to the canonical Ethereum Sepolia deployment and its runtime
+  code hash matches. The commit `d7dbc80` named in the Calibur README is on upstream branch
+  `audit-main`, with `src/` identical to v1.1.0. Evidence: `deployments/mantle-sepolia.json`
+  (`CaliburEntry`), checked by `contracts/script/DeployCalibur.s.sol` `verify()`.
 
 #### 4.1.1 Calibur version assessment: v1.1.0
 
@@ -323,6 +331,9 @@ account-level union counter is introduced).
   `quoteLimits`; absence does not mean unlimited.
 - If `maxValuePerCall > 0`, `mntLimit` must be configured.
 - The `to` of an `ERC20_APPROVE` permission must be an asset in `quoteLimits`.
+- The only permission allowed on a quote asset is `ERC20_APPROVE` (`approve`); any other
+  selector on a quote asset (`transfer`, `transferFrom`, `increaseAllowance`,
+  `increaseApproval`, …) is rejected.
 - A quote asset cannot be the `token` of a SELL (also checked at run time).
 
 #### 4.2.4 Limit semantics
@@ -400,13 +411,26 @@ top of it:
   chainId, the paymaster address, **the EntryPoint address (added)**, validUntil,
   validAfter. Constants and actual slices are authoritative; the v0.7 comment describing
   the `paymasterAndData` layout is not copied.
-- **Delegate binding (added):** `_validatePaymasterUserOp` reads the `sender`'s 23-byte
-  code (ERC-7562 AUTH-030 allows `EXTCODE*` on the current sender) and requires it to equal
+- **Implemented (0.1.0)** (`contracts/src/VerifyingPaymaster.sol`,
+  `contracts/test/VerifyingPaymaster.t.sol`):
+  - The hash does **not** cover the account signature (the account signs after
+    sponsorship, ERC-7677). Of `paymasterAndData` it covers only the paymaster address, the
+    two gas limits and the validity window.
+  - `paymasterAndData` layout: `paymaster ‖ uint128 verificationGas ‖ uint128 postOpGas ‖
+    abi.encode(uint48 validUntil, uint48 validAfter) ‖ 65-byte signature`.
+  - For a root init UserOp, the hashed `initCode` is the bytes the bundler packs: Alto and
+    viem pack the EIP-7702 marker as the 2-byte `0x7702`; signing over the 20-byte padded
+    form failed with `AA34` (`docs/infra.md` §3.5).
+- **Delegate binding (added):** `_validatePaymasterUserOp` checks the `sender`'s code
+  (ERC-7562 AUTH-030 allows `EXTCODE*` on the current sender) and requires it to equal
   exactly `0xef0100 ‖ CALIBUR_ENTRY`, including for later requests with empty `initCode`.
   This prevents "re-delegate after signing, re-sign the account signature, reuse the
-  paymaster signature".
+  paymaster signature". Implemented as `EXTCODEHASH(sender) == keccak256(0xef0100 ‖
+  CALIBUR_ENTRY)`, equivalent to the 23-byte comparison.
 - Operations: the signer is a separate sponsor key; the deposit is funded in MNT; stake
-  requirements follow the chosen bundler's actual validation (confirmed by the spike).
+  requirements follow the chosen bundler's actual validation (confirmed by the spike). No
+  paymaster stake is needed while validation reads only immutables and returns an empty
+  context (measured with strict Alto, `docs/infra.md` §3.3, §3.5, §8).
 - The port diff, construction / ownership, ERC-7677 encoding and signing order are in scope
   of the contract review checkpoint and the final security review.
 
@@ -586,6 +610,13 @@ rejection / `11` limit exceeded / `12` inventory exceeded / `13` key expired or 
 (The 4337 path is equivalent: the UserOp carries `eip7702Auth`, sponsored by the
 VerifyingPaymaster.)
 
+Only the root's init UserOp may carry `eip7702Auth`; session UserOps **never** do. They
+target already-delegated accounts with empty `initCode`. Reason (ERC-7562 STO-021/022): a
+bundler treats the `0x7702` marker as sender creation, and the hook's validation reads
+sender-associated storage in an external contract, which is then allowed only with a staked
+factory (the marker can never be staked). Measured rejection by strict Alto and the reference-bundler citation:
+`docs/infra.md` §3.4.
+
 ### 7.2 Agent execution (relayer by default)
 
 SDK simulate → the session key signs a SignedBatchedCall (agent lane, deadline 2 min) →
@@ -673,20 +704,23 @@ Also:
   revert griefing is charged.
 - **E2E:** anvil fork + strict-mode (non-unsafe) Alto, both paths through §8; the Sepolia
   script produces a list of transaction links.
-- **Security review** (a contract checkpoint in 0.1.0 and a final review in 0.4.0):
+- **Security review** (a contract checkpoint in 0.1.0 and a final review in 0.1.3):
   `AgentPolicyHook` in full, the `VerifyingPaymaster` port diff and the sponsor signing
   logic, the Calibur v1.0.0 → v1.1.0 diff, the SDK guards I6 / I7; earlier releases have
   review checkpoints for what they deliver.
 - The README states "POC, not audited"; sponsor hot wallets hold small amounts only.
+- The 0.1.0 contract review checkpoint is `docs/reviews/0.1.0.md` (High 0 / Medium 0 /
+  Low 1 / Info 3). Its SR-02 (`approveNative(ERC20ETH, 0)` in init) and SR-03 (atomic
+  hooked grant) are SDK preconditions of I8 and I6.
 
 ## 10. Risks and open items
 
 | Item | Description | Handling |
 |---|---|---|
-| Strict bundler feasibility | Whether strict-mode Alto / Pimlico accept a real type-4 delegation + a hook reading the Summary + a paymaster checking the delegate | **Day-1 spike**; release 0.1.0 is gated on it **actually landing on chain**; the one-week delivery depends on it |
-| Pimlico v0.8 on Mantle Sepolia | Not listed in its docs | Measured by the spike; fallback: an Alto configuration running on Sepolia that has landed a UserOp |
-| Mantle L1 fee | Affects the relayer fee upper bound | The spike confirms the computation |
-| Canonical address reproduction | The commit `d7dbc80` named in the Calibur README is not in the public history | Time-boxed to one hour; otherwise our own address |
+| Strict bundler feasibility | Whether strict-mode Alto / Pimlico accept a real type-4 delegation + a hook reading the Summary + a paymaster checking the delegate | **Landed** (`docs/infra.md`): Alto 0.0.21 in safe mode with a committed one-hunk result-decoding patch (owner decision); stock Alto cannot run safe mode for EntryPoint v0.7/v0.8 |
+| Pimlico v0.8 on Mantle Sepolia | Not listed in its docs | Measured (`docs/infra.md` §4): the public endpoint for 5003 has no EntryPoint v0.8; the patched Alto is used |
+| Mantle L1 fee | Affects the relayer fee upper bound | Measured (`docs/infra.md` §5): `paid = gasUsed × effectiveGasPrice + l1Fee + gasUsed × operatorFeeScalar × 100 + operatorFeeConstant`; operator fee ≈ 10 gwei/gas, L1 fee negligible |
+| Canonical address reproduction | The commit `d7dbc80` named in the Calibur README is on upstream branch `audit-main` (`src/` identical to v1.1.0) | Reproduced on Mantle Sepolia (§4.1, `deployments/mantle-sepolia.json`) |
 | Hook / paymaster unaudited | Our own core contracts | Invariants + attack tests + cross review + small funds |
 | Trusted-implementation assumption | The §4.4 contract needs manual verification | Written into the real launchpad's design constraints |
 | Position value / execution price | A compromised session can sell all of its attributed positions cheaply; the mark-to-market loss can exceed its quote limit | Accepted (cost-basis promise in §4.0) |

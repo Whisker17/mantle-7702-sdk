@@ -72,7 +72,40 @@ jobs:
         working-directory: contracts
         run: forge build --sizes
 
+      # The invariant suite runs only in the next step, under fixed seeds, so a failure is
+      # reproducible by seed instead of depending on a random one. A path filter compiles only the
+      # matched tests, so vm.getCode targets come from the Build step's artifacts.
       - name: Test
         if: steps.detect.outputs.present == 'true'
         working-directory: contracts
-        run: forge test -vvv
+        run: forge test -vvv --no-match-path 'test/invariant/**'
+
+      - name: Invariants (fixed seeds)
+        if: steps.detect.outputs.present == 'true'
+        working-directory: contracts
+        run: |
+          if [ ! -d test/invariant ]; then
+            echo "No contracts/test/invariant/ yet; skipping the fixed-seed invariant runs."
+            exit 0
+          fi
+          # forge exits 0 when no test matches and counts skipped invariants and ordinary test_*
+          # functions as passing, so each run must also print at least one passed invariant result:
+          # "[PASS] invariant_x() (runs: ..." (1.7.x), or "[PASS] invariant_x" inside a
+          # multi-invariant campaign block (1.8.x). pipefail: a broken parse counts as no evidence.
+          set -o pipefail
+          log="$RUNNER_TEMP/invariants.log"
+          for seed in 0x1 0x2 0x3; do
+            echo "::group::Invariants, FOUNDRY_FUZZ_SEED=$seed"
+            status=0
+            FOUNDRY_FUZZ_SEED="$seed" forge test --match-path 'test/invariant/**' -vvv > "$log" 2>&1 || status=$?
+            cat "$log"
+            echo "::endgroup::"
+            if [ "$status" -ne 0 ]; then
+              echo "::error::Invariant suite failed with FOUNDRY_FUZZ_SEED=$seed. Reproduce: cd contracts && FOUNDRY_FUZZ_SEED=$seed forge test --match-path 'test/invariant/**' -vvv"
+              exit 1
+            fi
+            if ! tr -d '\033' < "$log" | sed -E 's/\[[0-9;]*m//g' | grep -E '^\[PASS\] (invariant|statefulFuzz)' > /dev/null; then
+              echo "::error::No invariant test passed with FOUNDRY_FUZZ_SEED=$seed: contracts/test/invariant/ exists but forge reported no passing invariant_* (or statefulFuzz*) function."
+              exit 1
+            fi
+          done
