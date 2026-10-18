@@ -20,10 +20,16 @@ jobs:
     name: typescript
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Public, credential-free Mantle Sepolia endpoint for the anvil forks of the fork suites.
+      MANTLE_SEPOLIA_RPC_URL: https://rpc.sepolia.mantle.xyz
     steps:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
+
+      # anvil, for the fork suites.
+      - uses: foundry-rs/foundry-toolchain@v1
 
       - uses: actions/setup-node@v4
         with:
@@ -43,7 +49,43 @@ jobs:
         run: pnpm build
 
       - name: Test
-        run: pnpm test
+        run: pnpm test --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/vitest.json"
+
+      # The fork suites skip themselves without MANTLE_SEPOLIA_RPC_URL, which would leave the
+      # Test step green while running none of them. Fail if a fork suite (*.fork.test.ts, or a
+      # suite under e2e/) was not collected, skipped any test, or passed none.
+      - name: Fork suites ran
+        run: |
+          node - "$RUNNER_TEMP/vitest.json" <<'EOF'
+          const { execFileSync } = require("node:child_process");
+          const { readFileSync } = require("node:fs");
+          const { relative } = require("node:path");
+          const isFork = (f) => f.endsWith(".fork.test.ts") || f.startsWith("e2e/");
+          const report = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const ran = new Map(report.testResults.map((r) => [relative(process.cwd(), r.name), r]));
+          const tracked = execFileSync("git", ["ls-files", "*.fork.test.ts"], { encoding: "utf8" })
+            .split("\n")
+            .filter(Boolean);
+          const files = [...new Set([...tracked, ...[...ran.keys()].filter(isFork)])].sort();
+          let failed = false;
+          for (const f of files) {
+            const tests = ran.get(f)?.assertionResults ?? [];
+            const count = (s) => tests.filter((t) => t.status === s).length;
+            const passed = count("passed");
+            const notRun = tests.length - passed - count("failed");
+            console.log(`${f}: ${passed} passed, ${notRun} skipped`);
+            if (!ran.has(f) || passed === 0 || notRun > 0) {
+              console.log(`::error file=${f}::fork suite not executed (collected: ${ran.has(f)}, passed: ${passed}, skipped: ${notRun})`);
+              failed = true;
+            }
+          }
+          if (files.length === 0) console.log("No fork suites in this tree.");
+          process.exit(failed ? 1 : 0);
+          EOF
+
+      - name: Stop anvil
+        if: always()
+        run: pkill -x anvil || true
 
   contracts:
     name: contracts
