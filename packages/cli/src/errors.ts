@@ -35,6 +35,7 @@ export const EXIT_CODES = {
 export type ErrorCode = Exclude<keyof typeof EXIT_CODES, "OK"> | "USAGE" | "NOT_AVAILABLE";
 
 /** The SDK's reasons for a session key that was revoked (Calibur key removed, or hook tombstone). */
+// Depends on the SDK's exact reason strings (no structured revoked error); the fork test pins them.
 const REVOKED_REASONS = new Set([
   "Session key is not registered on the account",
   "Session is revoked",

@@ -23,15 +23,14 @@ import {
   saveProfile,
 } from "@mantle-aa/sdk";
 import {
-  createSponsorServer,
   EMBEDDED_SWITCH_ENV,
   Ledger,
   loadConfig,
   loadRelayerAccount,
   type ReplaceOptions,
-  type SponsorConfig,
   SponsorStore,
   startEmbeddedSponsor,
+  startSponsor,
 } from "@mantle-aa/sponsor";
 import {
   type Address,
@@ -388,38 +387,6 @@ function relayerCommand(op: "status" | "bump" | "cancel"): Command {
   };
 }
 
-/**
- * The long-running sponsor service of a config, as the sponsor package's own `startSponsor` (not
- * exported by `@mantle-aa/sponsor`) starts it: with a relayer key the ledger reconciles with the
- * chain first; `close` stops the server, the ledger and the database, in that order.
- */
-async function startSponsor(config: SponsorConfig, env: NodeJS.ProcessEnv) {
-  const account = config.relayerKeyEnv ? loadRelayerAccount(config, env) : undefined;
-  const store = new SponsorStore(config.database);
-  const client = createPublicClient({
-    chain: getChain(config.chainId),
-    transport: http(config.rpcUrl, { timeout: 10_000 }),
-  });
-  const ledger = account && new Ledger({ config, client, store, account });
-  try {
-    await ledger?.start();
-    const server = createSponsorServer({ config, client, store, ...(ledger && { ledger }) });
-    const url = await server.listen();
-    return {
-      url,
-      async close() {
-        await server.close();
-        await ledger?.close();
-        store.close();
-      },
-    };
-  } catch (error) {
-    await ledger?.close();
-    store.close();
-    throw error;
-  }
-}
-
 /** Resolves on SIGINT, SIGTERM or `signal`. */
 function stopped(signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -592,7 +559,7 @@ export const COMMANDS: Record<string, Command> = {
     options: { config: { type: "string" } },
     async run(ctx, v) {
       const config = loadConfig(required(v, "config"));
-      const sponsor = await startSponsor(config, ctx.env);
+      const sponsor = await startSponsor(config, { env: ctx.env });
       try {
         print(ctx, "sponsor serve", { url: sponsor.url, relayer: config.relayer });
         await stopped(ctx.io.signal);
