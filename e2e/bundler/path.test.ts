@@ -231,6 +231,7 @@ function bundlerRun(mode: Mode) {
   let checker: Awaited<ReturnType<typeof startEmbeddedSponsor>> | undefined;
 
   let stack: BundlerStack;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
   let client: BundlerStack["client"];
   let account: Address;
   /** The sponsor's paymaster service, reached without the SDK's pre-check. */
@@ -547,6 +548,11 @@ function bundlerRun(mode: Mode) {
   beforeAll(async () => {
     stack = await startBundlerStack(rpcUrl as string);
     client = stack.client;
+    // An empty block every second besides the automined ones, as a live chain keeps producing.
+    // Alto frees its one executor wallet only when a new block shows its bundle included; on a quiet
+    // fork a bundle it has not yet seen included keeps the wallet, and the next
+    // eth_sendUserOperation then waits for it without bound (its validation needs the wallet).
+    heartbeat = setInterval(() => void client.mine({ blocks: 1 }).catch(() => undefined), 1_000);
     await setPaymasterSigner(client, PAYMASTER, paymasterSigner.address);
     env.MANTLE_AA_RPC_URL = stack.rpcUrl;
     env.MANTLE_AA_BUNDLER_URL = stack.bundler.url;
@@ -632,6 +638,7 @@ function bundlerRun(mode: Mode) {
   }, 420_000);
 
   afterAll(async () => {
+    clearInterval(heartbeat);
     abort.abort();
     await serving;
     await checker?.close();
