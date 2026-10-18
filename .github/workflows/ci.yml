@@ -20,10 +20,16 @@ jobs:
     name: typescript
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Public, credential-free Mantle Sepolia endpoint for the anvil forks of the fork suites.
+      MANTLE_SEPOLIA_RPC_URL: https://rpc.sepolia.mantle.xyz
     steps:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
+
+      # anvil, for the fork suites.
+      - uses: foundry-rs/foundry-toolchain@v1
 
       - uses: actions/setup-node@v4
         with:
@@ -43,7 +49,46 @@ jobs:
         run: pnpm build
 
       - name: Test
-        run: pnpm test
+        run: pnpm test --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/vitest.json"
+
+      # The fork suites skip themselves without MANTLE_SEPOLIA_RPC_URL, which would leave the
+      # Test step green while running none of them. Fail if a fork suite (a tracked
+      # *.fork.test.ts or e2e/**/*.test.ts, or a collected suite under e2e/) was not collected,
+      # skipped any test, or passed none.
+      - name: Fork suites ran
+        run: |
+          node - "$RUNNER_TEMP/vitest.json" <<'EOF'
+          const { execFileSync } = require("node:child_process");
+          const { readFileSync } = require("node:fs");
+          const { relative } = require("node:path");
+          const isFork = (f) => f.endsWith(".fork.test.ts") || f.startsWith("e2e/");
+          const report = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const ran = new Map(report.testResults.map((r) => [relative(process.cwd(), r.name), r]));
+          const tracked = execFileSync("git", ["ls-files", "*.fork.test.ts", ":(glob)e2e/**/*.test.ts"], {
+            encoding: "utf8",
+          })
+            .split("\n")
+            .filter(Boolean);
+          const files = [...new Set([...tracked, ...[...ran.keys()].filter(isFork)])].sort();
+          let failed = false;
+          for (const f of files) {
+            const tests = ran.get(f)?.assertionResults ?? [];
+            const count = (s) => tests.filter((t) => t.status === s).length;
+            const passed = count("passed");
+            const notRun = tests.length - passed - count("failed");
+            console.log(`${f}: ${passed} passed, ${notRun} skipped`);
+            if (!ran.has(f) || passed === 0 || notRun > 0) {
+              console.log(`::error file=${f}::fork suite not executed (collected: ${ran.has(f)}, passed: ${passed}, skipped: ${notRun})`);
+              failed = true;
+            }
+          }
+          if (files.length === 0) console.log("No fork suites in this tree.");
+          process.exit(failed ? 1 : 0);
+          EOF
+
+      - name: Stop anvil
+        if: always()
+        run: pkill -x anvil || true
 
   contracts:
     name: contracts
@@ -78,7 +123,44 @@ jobs:
       - name: Test
         if: steps.detect.outputs.present == 'true'
         working-directory: contracts
-        run: forge test -vvv --no-match-path 'test/invariant/**'
+        env:
+          # Public, credential-free Mantle Sepolia endpoint for the *.fork.t.sol tests.
+          MANTLE_SEPOLIA_RPC_URL: https://rpc.sepolia.mantle.xyz
+        run: |
+          set -o pipefail
+          forge test -vvv --no-match-path 'test/invariant/**' 2>&1 | tee "$RUNNER_TEMP/forge-test.log"
+
+      # The fork tests skip themselves without MANTLE_SEPOLIA_RPC_URL, which would leave the Test
+      # step green while running none of them. Fail if a tracked *.fork.t.sol file reported no
+      # suite, skipped any test, or passed none. Skips in other files are left alone.
+      - name: Fork tests ran
+        if: steps.detect.outputs.present == 'true'
+        working-directory: contracts
+        run: |
+          files=$(git ls-files '*.fork.t.sol')
+          if [ -z "$files" ]; then
+            echo "No Foundry fork tests in this tree."
+            exit 0
+          fi
+          clean=$(tr -d '\033' < "$RUNNER_TEMP/forge-test.log" | sed -E 's/\[[0-9;]*m//g')
+          failed=0
+          for f in $files; do
+            # Sum "Suite result: ... N passed; N failed; N skipped" over the file's suites.
+            read -r suites passed skipped < <(awk -v f="$f" '
+              /^Ran [0-9]+ tests? for / { split($NF, a, ":"); cur = (a[1] == f) }
+              cur && /^Suite result:/ {
+                n++
+                for (i = 2; i <= NF; i++) { if ($i == "passed;") p += $(i-1); if ($i == "skipped;") s += $(i-1) }
+                cur = 0
+              }
+              END { print n + 0, p + 0, s + 0 }' <<< "$clean")
+            echo "$f: $suites suite(s), $passed passed, $skipped skipped"
+            if [ "$suites" -eq 0 ] || [ "$passed" -eq 0 ] || [ "$skipped" -gt 0 ]; then
+              echo "::error file=contracts/$f::fork test not executed (suites: $suites, passed: $passed, skipped: $skipped)"
+              failed=1
+            fi
+          done
+          exit "$failed"
 
       - name: Invariants (fixed seeds)
         if: steps.detect.outputs.present == 'true'
