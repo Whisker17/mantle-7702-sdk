@@ -1,0 +1,150 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`mantle-aa --via bundler through strict Alto on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve with a paymaster signer key) > account exec: a root UserOp without eip7702Auth (0) 1`] = `
+{
+  "command": "account exec",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "hash": "<bytes32>",
+    "warnings": [],
+  },
+}
+`;
+
+exports[`mantle-aa --via bundler through strict Alto on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve with a paymaster signer key) > account init --grant --agent: the root's init UserOp (eip7702Auth) with the first grant 1`] = `
+{
+  "command": "account init",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "hash": "<bytes32>",
+    "session": {
+      "address": "<address>",
+      "expiry": "<expiry>",
+      "hash": "<bytes32>",
+      "keyHash": "<bytes32>",
+      "keyfile": "trader-<address>.json",
+      "profile": "trader",
+    },
+    "state": "INITIALIZED",
+  },
+}
+`;
+
+exports[`mantle-aa --via bundler through strict Alto on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve with a paymaster signer key) > account init: rejected by the paymaster service for an account off the allowlist (20) 1`] = `
+{
+  "command": "account init",
+  "error": {
+    "code": "SPONSOR_REJECTED",
+    "message": "Init failed; the account is UNDELEGATED; retry init: SponsorRejectedError: Sponsor rejected the request: NOT_ALLOWLISTED (<address> is not allowlisted)",
+    "reason": "NOT_ALLOWLISTED",
+    "type": "SponsorRejectedError",
+  },
+  "exitCode": 20,
+  "ok": false,
+}
+`;
+
+exports[`mantle-aa --via bundler through strict Alto on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve with a paymaster signer key) > agent exec: approve + buy as a session UserOp (0) 1`] = `
+{
+  "command": "agent exec",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "hash": "<bytes32>",
+    "keyHash": "<bytes32>",
+    "profile": "trader",
+    "success": true,
+  },
+}
+`;
+
+exports[`mantle-aa --via bundler through strict Alto on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve with a paymaster signer key) > agent exec: no bundler URL is a usage error (1) 1`] = `
+{
+  "command": "agent exec",
+  "error": {
+    "code": "USAGE",
+    "message": "no bundler: pass --bundler-url or set MANTLE_AA_BUNDLER_URL",
+    "type": "UsageError",
+  },
+  "exitCode": 1,
+  "ok": false,
+}
+`;
+
+exports[`mantle-aa --via bundler through strict Alto on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve with a paymaster signer key) > session grant / update / revoke, then agent exec with the revoked key (13) > grant 1`] = `
+{
+  "command": "session grant",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "address": "<address>",
+    "expiry": "<expiry>",
+    "hash": "<bytes32>",
+    "keyHash": "<bytes32>",
+    "keyfile": "second-<address>.json",
+    "profile": "second",
+  },
+}
+`;
+
+exports[`mantle-aa --via bundler through strict Alto on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve with a paymaster signer key) > session grant / update / revoke, then agent exec with the revoked key (13) > revoke 1`] = `
+{
+  "command": "session revoke",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "hash": "<bytes32>",
+    "keyHash": "<bytes32>",
+    "profile": "trader",
+    "resetAllowances": [
+      {
+        "spender": "<address>",
+        "token": "<address>",
+      },
+    ],
+  },
+}
+`;
+
+exports[`mantle-aa --via bundler through strict Alto on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve with a paymaster signer key) > session grant / update / revoke, then agent exec with the revoked key (13) > revoked 1`] = `
+{
+  "command": "agent exec",
+  "error": {
+    "code": "KEY_EXPIRED_OR_REVOKED",
+    "message": "Session key is not registered on the account",
+    "reason": "Session key is not registered on the account",
+    "type": "PolicyViolationError",
+  },
+  "exitCode": 13,
+  "ok": false,
+}
+`;
+
+exports[`mantle-aa --via bundler through strict Alto on a Mantle Sepolia fork > (a) against a long-running sponsor (sponsor serve with a paymaster signer key) > session grant / update / revoke, then agent exec with the revoked key (13) > update 1`] = `
+{
+  "command": "session update",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "hash": "<bytes32>",
+    "keyHash": "<bytes32>",
+    "profile": "trader",
+    "resetAllowances": [],
+  },
+}
+`;
+
+exports[`mantle-aa --via bundler through strict Alto on a Mantle Sepolia fork > (b) embedded (MANTLE_AA_EMBEDDED_RELAYER=1 and MANTLE_AA_PAYMASTER_SIGNER_KEY) > without the paymaster signer key, --via bundler is a usage error (1) 1`] = `
+{
+  "command": "account init",
+  "error": {
+    "code": "USAGE",
+    "message": "Init failed; the account is UNDELEGATED; retry init: UsageError: the embedded sponsor needs MANTLE_AA_PAYMASTER_SIGNER_KEY for --via bundler",
+    "type": "UsageError",
+  },
+  "exitCode": 1,
+  "ok": false,
+}
+`;

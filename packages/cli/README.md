@@ -10,6 +10,9 @@ The `mantle-aa` command (docs/DESIGN.md §6). Build with `pnpm build`; run `node
 | Chain RPC URL (no default network) | `--rpc-url` | `MANTLE_AA_RPC_URL` |
 | Long-running sponsor | `--sponsor-url` | `MANTLE_AA_SPONSOR_URL` |
 | Embedded sponsor (tests, local demos) | | `MANTLE_AA_EMBEDDED_RELAYER=1` and `MANTLE_AA_RELAYER_KEY` |
+| Submission path (default `relayer`) | `--via relayer\|bundler` | |
+| ERC-4337 bundler (`--via bundler`) | `--bundler-url` | `MANTLE_AA_BUNDLER_URL` |
+| Embedded sponsor's paymaster signer (`--via bundler`) | | `MANTLE_AA_PAYMASTER_SIGNER_KEY` |
 | Keystore password | interactive prompt | `MANTLE_AA_KEYSTORE_PASSWORD` |
 | Key and profile directory | | `MANTLE_AA_HOME` (default `~/.mantle-aa`) |
 
@@ -17,6 +20,15 @@ A sponsor is reached only by commands that submit. With the embedded sponsor eac
 starts the sponsor in process, allowlisting the profile's account, with its ledger in
 `<home>/embedded-sponsor.sqlite`, and stops it before exiting. Use a sponsor URL or the embedded
 sponsor, not both.
+
+`--via` chooses how every submitting command — `account init`, `account exec`,
+`session grant|update|revoke` and `agent exec` — reaches the chain. `relayer` (the default) sends
+a signed batch to the sponsor's relayer. `bundler` sends an ERC-4337 UserOperation to the bundler,
+with paymaster data from the sponsor's ERC-7677 service (`pm_*`, on the same sponsor URL);
+`account init` carries the EIP-7702 authorization as the UserOp's `eip7702Auth`. With the embedded
+sponsor, `--via bundler` also needs `MANTLE_AA_PAYMASTER_SIGNER_KEY`, the deployed
+VerifyingPaymaster's signer key (the sponsor checks it on start); without it the command is a usage
+error. Commands that only read accept `--via` and ignore it.
 
 Private keys never go on the command line: `keys import` reads the key from stdin or a prompt.
 
@@ -65,8 +77,8 @@ SIGTERM. The shapes are pinned by the snapshots in `test/__snapshots__/`.
 | 13 | `KEY_EXPIRED_OR_REVOKED` | `KeyExpiredError`; a revoked session; the sponsor's `KEY_EXPIRED`, `KEY_INACTIVE`, `KEY_NOT_REGISTERED` |
 | 20 | `SPONSOR_REJECTED` | any other `SponsorRejectedError` (`CANCELLED` included) |
 | 21 | `SPONSOR_BUSY` | `SponsorBusyError` |
-| 30 | `EXECUTION_REVERTED` | `ExecutionRevertedError` (in simulation, or a batch that reverted on chain) |
-| 1 | `USAGE`, `NOT_AVAILABLE`, `ERROR` | bad arguments or settings; `account panic` and `agent exec --via bundler` (later versions); anything else |
+| 30 | `EXECUTION_REVERTED` | `ExecutionRevertedError` (in simulation, in the bundler's simulation, or a batch or UserOp that reverted on chain) |
+| 1 | `USAGE`, `NOT_AVAILABLE`, `ERROR` | bad arguments or settings (`--via bundler` without a bundler URL included); `account panic` (later versions); anything else |
 
 No output contains a private key or the password, and URLs in error messages are redacted.
 
