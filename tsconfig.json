@@ -2,6 +2,8 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
+    // e2e/bundler/land-sepolia.ts runs under plain Node, which needs the real `.ts` extension.
+    "allowImportingTsExtensions": true,
     "types": ["node"],
     "paths": {
       "@mantle-aa/sdk": ["./packages/sdk/src/index.ts"],
