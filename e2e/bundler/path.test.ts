@@ -186,6 +186,15 @@ function revertData(error: unknown): Hex {
   return data;
 }
 
+/** The last 40 entries of Alto's log, without its head polling (`eth_getBlockByNumber`, …). */
+const altoLog = (log: string) =>
+  log
+    .split(/\n(?=\[\d\d:\d\d:\d\d\.\d{3}\])/)
+    .filter((entry) => !/"eth_(getBlockByNumber|blockNumber)"/.test(entry))
+    .slice(-40)
+    .join("\n")
+    .slice(-16_000);
+
 /** Polls `check` every 200 ms until it holds; fails after `ms`. */
 async function until(check: () => boolean, ms: number, what: string) {
   const deadline = Date.now() + ms;
@@ -315,9 +324,9 @@ function bundlerRun(mode: Mode) {
     for (const secret of [PASSWORD, signerKey, relayerKey, checkRelayerKey]) {
       expect(output).not.toContain(secret.replace(/^0x/, ""));
     }
-    // On a mismatch, Alto's recent log shows what the bundler did with the op.
+    // On a mismatch, Alto's recent log (without its block polling) shows what it did with the op.
     const alto = () =>
-      result.code === code ? "" : `\n--- alto ---\n${stack.bundler.logs().slice(-8_000)}`;
+      result.code === code ? "" : `\n--- alto ---\n${altoLog(stack.bundler.logs())}`;
     expect(result.code, `${args.join(" ")}: ${result.stdout}${alto()}`).toBe(code);
     expect(result.json.ok).toBe(code === 0);
     return result;
