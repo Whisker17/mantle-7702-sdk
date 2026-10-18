@@ -88,8 +88,11 @@ jobs:
             echo "No contracts/test/invariant/ yet; skipping the fixed-seed invariant runs."
             exit 0
           fi
-          # forge exits 0 when no test matches, so each run must also report at least one passed
-          # test in its summary line ("Ran N test suite(s) in ...: P tests passed, ...").
+          # forge exits 0 when no test matches and counts skipped invariants and ordinary test_*
+          # functions as passing, so each run must also print at least one passed invariant result:
+          # "[PASS] invariant_x() (runs: ..." (1.7.x), or "[PASS] invariant_x" inside a
+          # multi-invariant campaign block (1.8.x). pipefail: a broken parse counts as no evidence.
+          set -o pipefail
           log="$RUNNER_TEMP/invariants.log"
           for seed in 0x1 0x2 0x3; do
             echo "::group::Invariants, FOUNDRY_FUZZ_SEED=$seed"
@@ -101,9 +104,8 @@ jobs:
               echo "::error::Invariant suite failed with FOUNDRY_FUZZ_SEED=$seed. Reproduce: cd contracts && FOUNDRY_FUZZ_SEED=$seed forge test --match-path 'test/invariant/**' -vvv"
               exit 1
             fi
-            passed=$(tr -d '\033' < "$log" | sed -E 's/\[[0-9;]*m//g' | sed -nE 's/^Ran [0-9]+ test suites? in .*: ([0-9]+) tests passed,.*/\1/p' | tail -n 1)
-            if [ "${passed:-0}" -eq 0 ]; then
-              echo "::error::No invariant test ran with FOUNDRY_FUZZ_SEED=$seed: contracts/test/invariant/ exists but forge matched no passing test functions."
+            if ! tr -d '\033' < "$log" | sed -E 's/\[[0-9;]*m//g' | grep -E '^\[PASS\] (invariant|statefulFuzz)' > /dev/null; then
+              echo "::error::No invariant test passed with FOUNDRY_FUZZ_SEED=$seed: contracts/test/invariant/ exists but forge reported no passing invariant_* (or statefulFuzz*) function."
               exit 1
             fi
           done
