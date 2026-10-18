@@ -120,7 +120,44 @@ jobs:
       - name: Test
         if: steps.detect.outputs.present == 'true'
         working-directory: contracts
-        run: forge test -vvv --no-match-path 'test/invariant/**'
+        env:
+          # Public, credential-free Mantle Sepolia endpoint for the *.fork.t.sol tests.
+          MANTLE_SEPOLIA_RPC_URL: https://rpc.sepolia.mantle.xyz
+        run: |
+          set -o pipefail
+          forge test -vvv --no-match-path 'test/invariant/**' 2>&1 | tee "$RUNNER_TEMP/forge-test.log"
+
+      # The fork tests skip themselves without MANTLE_SEPOLIA_RPC_URL, which would leave the Test
+      # step green while running none of them. Fail if a tracked *.fork.t.sol file reported no
+      # suite, skipped any test, or passed none. Skips in other files are left alone.
+      - name: Fork tests ran
+        if: steps.detect.outputs.present == 'true'
+        working-directory: contracts
+        run: |
+          files=$(git ls-files '*.fork.t.sol')
+          if [ -z "$files" ]; then
+            echo "No Foundry fork tests in this tree."
+            exit 0
+          fi
+          clean=$(tr -d '\033' < "$RUNNER_TEMP/forge-test.log" | sed -E 's/\[[0-9;]*m//g')
+          failed=0
+          for f in $files; do
+            # Sum "Suite result: ... N passed; N failed; N skipped" over the file's suites.
+            read -r suites passed skipped < <(awk -v f="$f" '
+              /^Ran [0-9]+ tests? for / { split($NF, a, ":"); cur = (a[1] == f) }
+              cur && /^Suite result:/ {
+                n++
+                for (i = 2; i <= NF; i++) { if ($i == "passed;") p += $(i-1); if ($i == "skipped;") s += $(i-1) }
+                cur = 0
+              }
+              END { print n + 0, p + 0, s + 0 }' <<< "$clean")
+            echo "$f: $suites suite(s), $passed passed, $skipped skipped"
+            if [ "$suites" -eq 0 ] || [ "$passed" -eq 0 ] || [ "$skipped" -gt 0 ]; then
+              echo "::error file=contracts/$f::fork test not executed (suites: $suites, passed: $passed, skipped: $skipped)"
+              failed=1
+            fi
+          done
+          exit "$failed"
 
       - name: Invariants (fixed seeds)
         if: steps.detect.outputs.present == 'true'
