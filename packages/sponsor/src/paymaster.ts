@@ -109,6 +109,8 @@ export interface PaymasterIssuer {
   /** The result issued for a request digest before, or undefined. */
   find(digest: Hex): PaymasterDataResult | undefined;
   sponsor(decision: PaymasterDecision): Promise<PaymasterDataResult>;
+  /** Settles or releases the open sponsorships (only `account`'s, if given) the chain has ended. */
+  reconcile(account?: Address): Promise<void>;
 }
 
 /** The UserOp with the sponsor's paymaster fields. */
@@ -292,6 +294,19 @@ async function decide(
   return { ...decoded, budgetClass, day, gas, maxFee };
 }
 
+/**
+ * Before the busy check: the bundler tells the client of an inclusion before the reconcile loop
+ * sees it, so the sender's open sponsorship is reconciled once now. Only one the chain can still
+ * include keeps the account busy; a failed read leaves it open, and so the account busy.
+ */
+async function reconcileSender(
+  ctx: SponsorContext & { paymaster?: PaymasterIssuer | undefined },
+  sender: Address,
+): Promise<void> {
+  if (!ctx.paymaster || !ctx.store.openEntry(sender)?.paymaster) return;
+  await ctx.paymaster.reconcile(sender).catch(() => undefined);
+}
+
 function parse(params: unknown): PaymasterRequest {
   try {
     return parsePaymasterRequest(params);
@@ -318,6 +333,7 @@ export async function sponsorUserOp(
   if (method === PM_GET_PAYMASTER_STUB_DATA_METHOD) {
     const now = (ctx.now ?? clock)();
     const decoded = await decodeUserOp(method, request, ctx.config, now);
+    await reconcileSender(ctx, decoded.sender);
     if (ctx.store.openEntry(decoded.sender)) {
       reject(SponsorRejectCode.SPONSOR_BUSY, `${decoded.sender} has a request in flight`);
     }
@@ -336,6 +352,7 @@ export async function sponsorUserOp(
   if (issued) return issued;
   const now = (ctx.now ?? clock)();
   checkValidity(request.auth, ctx.config, now);
+  await reconcileSender(ctx, decoded.sender);
   const decision = await decide(ctx, decoded, now);
   if (!ctx.paymaster) return unavailable();
   return ctx.paymaster.sponsor(decision);
@@ -463,9 +480,14 @@ export class PaymasterLedger implements PaymasterIssuer {
    * `UserOperationEvent` (in `LOG_BLOCK_RANGE` spans, recording progress) and settle it if found;
    * release it if none was found up to a block whose timestamp is past its `validUntil`, after which
    * the EntryPoint can no longer include it (`AA32`). A failed read leaves it open for the next pass.
+   * With `account`, only that account's. Passes may overlap (the loop and a request's): settling,
+   * releasing and recording progress each re-read the entry in a transaction and act only on an open
+   * one, so an entry is closed once and a closed one is never rewritten.
    */
-  async reconcile(): Promise<void> {
-    const open = this.#store.entries(["submitted"]).filter((e) => e.paymaster);
+  async reconcile(account?: Address): Promise<void> {
+    const open = this.#store
+      .entries(["submitted"])
+      .filter((e) => e.paymaster && (account === undefined || e.account === account));
     if (!open.length) return;
     const head = await getBlock(this.#client, { blockTag: "latest" });
     for (const entry of open) {
@@ -486,9 +508,7 @@ export class PaymasterLedger implements PaymasterIssuer {
           break;
         }
         scannedTo = toBlock;
-        this.#store.updateEntry(entry.digest, {
-          paymaster: { ...record, scannedTo: Number(scannedTo) },
-        });
+        if (!this.#scanned(entry.digest, scannedTo)) break;
       }
       if (scannedTo === head.number && head.timestamp > BigInt(record.validUntil)) {
         this.#release(entry.digest);
@@ -506,6 +526,20 @@ export class PaymasterLedger implements PaymasterIssuer {
       // Never log the error itself: viem messages carry the RPC URL.
       await this.reconcile().catch(() => console.error("sponsor: paymaster reconciliation failed"));
     }
+  }
+
+  /** Records the entry searched up to `block`, if still open; false once another pass closed it. */
+  #scanned(digest: Hex, block: bigint): boolean {
+    return this.#store.transaction(() => {
+      const now = this.#store.entry(digest);
+      if (now?.state !== "submitted" || !now.paymaster) return false;
+      if (block > BigInt(now.paymaster.scannedTo)) {
+        this.#store.updateEntry(digest, {
+          paymaster: { ...now.paymaster, scannedTo: Number(block) },
+        });
+      }
+      return true;
+    });
   }
 
   /** Charges what the EntryPoint took from the deposit and releases the rest of the reservation. */
