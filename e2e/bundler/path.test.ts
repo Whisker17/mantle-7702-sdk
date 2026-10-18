@@ -80,7 +80,7 @@ import {
   testEnv,
 } from "../../packages/cli/test/helpers.js";
 import { type BundlerStack, setPaymasterSigner, startBundlerStack } from "./harness.js";
-import { bundlerRpc } from "./userop.js";
+import { bundlerRpc, sendSponsoredUserOp } from "./userop.js";
 
 const rpcUrl = process.env.MANTLE_SEPOLIA_RPC_URL;
 const book = loadDeployments();
@@ -186,14 +186,14 @@ function revertData(error: unknown): Hex {
   return data;
 }
 
-/** The last 40 entries of Alto's log, without its head polling (`eth_getBlockByNumber`, …). */
+/** Alto's last 150 log entries, each cut to 300 characters, without its head polling. */
 const altoLog = (log: string) =>
   log
     .split(/\n(?=\[\d\d:\d\d:\d\d\.\d{3}\])/)
     .filter((entry) => !/"eth_(getBlockByNumber|blockNumber)"/.test(entry))
-    .slice(-40)
-    .join("\n")
-    .slice(-16_000);
+    .slice(-150)
+    .map((entry) => entry.slice(0, 300))
+    .join("\n");
 
 /** Polls `check` every 200 ms until it holds; fails after `ms`. */
 async function until(check: () => boolean, ms: number, what: string) {
@@ -554,6 +554,28 @@ function bundlerRun(mode: Mode) {
     // eth_sendUserOperation then waits for it without bound (its validation needs the wallet).
     heartbeat = setInterval(() => void client.mine({ blocks: 1 }).catch(() => undefined), 1_000);
     await setPaymasterSigner(client, PAYMASTER, paymasterSigner.address);
+    // Warm the fresh fork and Alto with a throwaway root init UserOp, as the smoke test lands one.
+    // The first UserOp on a fork fetches its state from the upstream RPC: on a slow runner that
+    // took up to 41 s of the SDK's 60 s sponsorship window, and Alto drops an op whose window has
+    // passed at its pre-bundle re-check (AA32), leaving the client to wait for a receipt.
+    const warm = privateKeyToAccount(generatePrivateKey());
+    const warmed = await sendSponsoredUserOp({
+      client,
+      bundlerUrl: stack.bundler.url,
+      chainId: book.chainId,
+      root: warm,
+      authorization: await warm.signAuthorization({
+        address: book.caliburEntry,
+        chainId: book.chainId,
+        nonce: 0,
+      }),
+      calls: [approve(0n)],
+      paymaster: PAYMASTER,
+      paymasterSigner,
+      sendAttempts: 3,
+      logs: () => altoLog(stack.bundler.logs()),
+    });
+    expect(warmed.success).toBe(true);
     env.MANTLE_AA_RPC_URL = stack.rpcUrl;
     env.MANTLE_AA_BUNDLER_URL = stack.bundler.url;
     writeFileSync(policy, JSON.stringify(policyJson));
