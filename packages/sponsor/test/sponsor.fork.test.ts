@@ -33,7 +33,12 @@ import {
 } from "../../sdk/test/account/fork.js";
 import { SponsorRejection } from "../src/auth.js";
 import type { SponsorConfig } from "../src/config.js";
-import { authorizeRelay, createSponsorServer, type SponsorContext } from "../src/server.js";
+import {
+  authorizeRelay,
+  createSponsorServer,
+  type RelaySubmitter,
+  type SponsorContext,
+} from "../src/server.js";
 import { dayOf, SponsorStore } from "../src/store.js";
 import {
   book,
@@ -277,10 +282,10 @@ describe.skipIf(!rpcUrl)("sponsor authentication and policy on a Mantle Sepolia 
     }
   }, 60_000);
 
-  it("answers over HTTP: SUBMISSION_UNAVAILABLE without a relayer, the submitter's result with one", async () => {
+  it("answers over HTTP: SUBMISSION_UNAVAILABLE without a relayer, the ledger's result with one", async () => {
     const params = await request({ signer: session, keyHash, calls: [approve(PAD)] });
-    const call = async (submit?: (d: { digest: Hex }) => Promise<unknown>) => {
-      const server = createSponsorServer({ ...ctx, ...(submit ? { submit } : {}) });
+    const call = async (ledger?: RelaySubmitter) => {
+      const server = createSponsorServer({ ...ctx, ...(ledger ? { ledger } : {}) });
       const base = await server.listen();
       try {
         const res = await fetch(base, {
@@ -301,8 +306,13 @@ describe.skipIf(!rpcUrl)("sponsor authentication and policy on a Mantle Sepolia 
       code: SPONSOR_REJECTED_RPC_CODE,
       data: { reason: SponsorRejectCode.SUBMISSION_UNAVAILABLE },
     });
-    expect((await call(async (d) => ({ accepted: d.digest }))).result).toEqual({
-      accepted: (await authorizeRelay(ctx, params)).digest,
+    const ledger: RelaySubmitter = {
+      find: () => undefined,
+      relay: async (d) => ({ status: "pending", batchDigest: d.batchDigest }),
+    };
+    expect((await call(ledger)).result).toEqual({
+      status: "pending",
+      batchDigest: (await authorizeRelay(ctx, params)).batchDigest,
     });
   }, 60_000);
 

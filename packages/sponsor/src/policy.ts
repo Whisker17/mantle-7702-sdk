@@ -6,16 +6,14 @@ import {
   decodeFunctionData,
   getAddress,
   type Hex,
-  parseAbi,
   type SignedAuthorization,
-  serializeTransaction,
-  size,
   toFunctionSelector,
 } from "viem";
-import { estimateFeesPerGas, estimateGas, readContract } from "viem/actions";
+import { estimateFeesPerGas, estimateGas } from "viem/actions";
 import type { SignedBatchedCall } from "./auth.js";
 import { reject } from "./auth.js";
 import type { SponsorConfig } from "./config.js";
+import { relayerFeeBound } from "./fees.js";
 import type { BudgetClass, DailyUsage } from "./store.js";
 
 /**
@@ -56,14 +54,6 @@ export function classify(
   return management ? "management" : "business";
 }
 
-/** Mantle's GasPriceOracle predeploy (docs/infra.md §5). */
-export const GAS_PRICE_ORACLE: Address = "0x420000000000000000000000000000000000000F";
-const gasPriceOracleAbi = parseAbi([
-  "function getOperatorFee(uint256 gasUsed) view returns (uint256)",
-  "function getL1FeeUpperBound(uint256 unsignedTxSize) view returns (uint256)",
-  "function tokenRatio() view returns (uint256)",
-]);
-
 /** Headroom over the sponsor's own gas estimate, so a state change before submission does not run out. */
 const GAS_HEADROOM_PERCENT = 20n;
 
@@ -80,8 +70,7 @@ export interface SponsoredTransaction {
 
 /**
  * Simulates the transaction from the relayer (`eth_estimateGas`, so a reverting batch is refused
- * here) and bounds its fee: `gas × maxFeePerGas + operator fee(gas) + tokenRatio ×
- * L1-fee upper bound(size)` (docs/infra.md §5, DESIGN §5.2).
+ * here) and bounds its fee with `relayerFeeBound` (docs/infra.md §5, DESIGN §5.2).
  */
 export async function simulate(
   client: Client,
@@ -100,29 +89,8 @@ export async function simulate(
   const gas = estimate + (estimate * GAS_HEADROOM_PERCENT) / 100n;
   try {
     const { maxFeePerGas, maxPriorityFeePerGas } = await estimateFeesPerGas(client);
-    const unsigned = serializeTransaction({
-      chainId: config.chainId,
-      nonce: Number.MAX_SAFE_INTEGER, // an upper bound on the relayer nonce's encoded size
-      gas,
-      maxFeePerGas,
-      maxPriorityFeePerGas,
-      ...tx,
-      ...(tx.authorizationList ? { type: "eip7702" } : { type: "eip1559" }),
-    } as never);
-    const oracle = (functionName: string, args: unknown[] = []) =>
-      readContract(client, {
-        address: GAS_PRICE_ORACLE,
-        abi: gasPriceOracleAbi,
-        functionName,
-        args,
-      } as never) as Promise<bigint>;
-    const [operatorFee, l1UpperBound, tokenRatio] = await Promise.all([
-      oracle("getOperatorFee", [gas]),
-      oracle("getL1FeeUpperBound", [BigInt(size(unsigned))]),
-      oracle("tokenRatio"),
-    ]);
-    const maxFee = gas * maxFeePerGas + operatorFee + tokenRatio * l1UpperBound;
-    return { ...tx, gas, maxFeePerGas, maxPriorityFeePerGas, maxFee };
+    const priced = { ...tx, gas, maxFeePerGas, maxPriorityFeePerGas };
+    return { ...priced, maxFee: await relayerFeeBound(client, config.chainId, priced) };
   } catch {
     return reject(SponsorRejectCode.FEE_UNBOUNDED, "the gas price oracle could not bound the fee");
   }

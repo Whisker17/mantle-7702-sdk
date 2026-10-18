@@ -92,7 +92,7 @@ export const SponsorRejectCode = {
   ROOT_LANE_MISUSE: "ROOT_LANE_MISUSE",
   /** The batch nonce's lane is not the authenticated key's lane. */
   WRONG_LANE: "WRONG_LANE",
-  /** The batch names an executor other than the sponsor's relayer (or anyone). */
+  /** The batch's executor is not the sponsor's relayer (executor 0, "anyone", included). */
   WRONG_EXECUTOR: "WRONG_EXECUTOR",
   /** The batch signature does not verify for the batch's key. */
   BAD_BATCH_SIGNATURE: "BAD_BATCH_SIGNATURE",
@@ -120,10 +120,34 @@ export const SponsorRejectCode = {
   DAILY_BUDGET: "DAILY_BUDGET",
   /** A management request would exceed the global daily budget. */
   MANAGEMENT_BUDGET: "MANAGEMENT_BUDGET",
-  /** The request passed every check but this sponsor cannot submit transactions. */
+  /**
+   * The request passed every check but this sponsor could not submit it: it has no relayer, the
+   * node refused the transaction, or its relayer nonce was consumed by another transaction.
+   */
   SUBMISSION_UNAVAILABLE: "SUBMISSION_UNAVAILABLE",
+  /** The account already has a request in flight (at most one per account); retry once it settles. */
+  SPONSOR_BUSY: "SPONSOR_BUSY",
 } as const;
 export type SponsorRejectCode = (typeof SponsorRejectCode)[keyof typeof SponsorRejectCode];
+
+/**
+ * The `sponsor_relay` result. Retrying the same request (same request digest), or another request
+ * for the same SignedBatchedCall, returns this result again and never pays twice.
+ */
+export interface RelayResult {
+  /**
+   * `pending`: submitted but not settled within the sponsor's wait; retry the same request to wait
+   * again. `success` / `reverted`: the relayer transaction was mined with the batch. `cancelled`:
+   * the relayer replaced it with a cancel; the batch did not run.
+   */
+  status: "pending" | "success" | "reverted" | "cancelled";
+  /** The relayer transaction: the one mined once settled, else the latest broadcast (if any yet). */
+  hash?: Hex;
+  /** The SignedBatchedCall's EIP-712 digest under the account's Calibur domain. */
+  batchDigest: Hex;
+  /** Wei charged for the request (decimal string), once settled. Failed transactions are charged. */
+  fee?: string;
+}
 
 /** JSON-RPC error code of a sponsor rejection; `data` is `{ reason: SponsorRejectCode, detail }`. */
 export const SPONSOR_REJECTED_RPC_CODE = -32010;

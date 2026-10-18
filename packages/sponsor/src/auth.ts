@@ -68,26 +68,12 @@ const isRoot = (keyHash: Hex) => BigInt(keyHash) === 0n;
 const isKeySigner = (signer: Address, account: Address, keyHash: Hex) =>
   isRoot(keyHash) ? signer === account : secp256k1KeyHash(signer) === keyHash.toLowerCase();
 
-/**
- * Checks everything that needs no chain state: the request's chain and sponsor domain, its validity
- * window, the decode of the SignedBatchedCall, `(sender, keyHash, nonce lane)` agreement, the
- * executor, the request signature and the authorization's shape and signer.
- */
-export async function decodeRelay(
-  request: RelayRequest,
+/** The request is valid at `now`, and not for longer than the sponsor allows. */
+export function checkValidity(
+  auth: RelayRequest["auth"],
   config: SponsorConfig,
   now: number,
-): Promise<DecodedRelay> {
-  const { auth, sender } = request;
-  if (auth.chainId !== config.chainId) {
-    reject(SponsorRejectCode.WRONG_CHAIN, `request chain ${auth.chainId} is not ${config.chainId}`);
-  }
-  if (auth.sponsor !== config.relayer) {
-    reject(SponsorRejectCode.WRONG_DOMAIN, `request names sponsor ${auth.sponsor}`);
-  }
-  if (auth.entry !== config.addresses.caliburEntry) {
-    reject(SponsorRejectCode.WRONG_DOMAIN, `request names entry ${auth.entry}`);
-  }
+): void {
   if (now < auth.validAfter || now > auth.validUntil) {
     reject(
       SponsorRejectCode.REQUEST_EXPIRED,
@@ -100,6 +86,35 @@ export async function decodeRelay(
       `validity ends more than ${config.maxRequestValiditySeconds}s from now`,
     );
   }
+}
+
+/**
+ * Checks everything that needs no chain state: the request's chain and sponsor domain, its validity
+ * window at `now` (skipped without one: a retry finds an issued result whatever its validity), the
+ * decode of the SignedBatchedCall, `(sender, keyHash, nonce lane)` agreement, the executor, the
+ * request signature and the authorization's shape and signer.
+ *
+ * The executor must be this sponsor's relayer, for root and session batches alike: a batch any
+ * executor may relay (executor 0) can be landed first by anyone who sees it, making the relayer's
+ * own transaction revert at the sponsor's cost, and a root one can run inside another call
+ * (docs/reviews/0.1.0.md, O1).
+ */
+export async function decodeRelay(
+  request: RelayRequest,
+  config: SponsorConfig,
+  now?: number,
+): Promise<DecodedRelay> {
+  const { auth, sender } = request;
+  if (auth.chainId !== config.chainId) {
+    reject(SponsorRejectCode.WRONG_CHAIN, `request chain ${auth.chainId} is not ${config.chainId}`);
+  }
+  if (auth.sponsor !== config.relayer) {
+    reject(SponsorRejectCode.WRONG_DOMAIN, `request names sponsor ${auth.sponsor}`);
+  }
+  if (auth.entry !== config.addresses.caliburEntry) {
+    reject(SponsorRejectCode.WRONG_DOMAIN, `request names entry ${auth.entry}`);
+  }
+  if (now !== undefined) checkValidity(auth, config, now);
 
   let decoded: ReturnType<typeof decodeExecute>;
   try {
@@ -132,7 +147,7 @@ export async function decodeRelay(
       `lane ${lane} is not ${keyHash}'s lane ${laneOf(keyHash)}`,
     );
   }
-  if (batch.executor !== zeroAddress && getAddress(batch.executor) !== config.relayer) {
+  if (getAddress(batch.executor) !== config.relayer) {
     reject(SponsorRejectCode.WRONG_EXECUTOR, `batch executor ${batch.executor}`);
   }
 
@@ -170,13 +185,14 @@ export async function decodeRelay(
  * Checks the chain: the account's delegation (and, for a session, its safe initialisation), the
  * session key (registered, a hooked non-admin key, unexpired per its Calibur settings,
  * `summary.active`), the authorization nonce, and the batch signature itself under the account's
- * EIP-712 domain. Nothing the client checked is trusted.
+ * EIP-712 domain. Nothing the client checked is trusted. Resolves to the batch's EIP-712 digest,
+ * which identifies the relayer result (DESIGN §5.2).
  */
 export async function verifyOnChain(
   client: Client,
   config: SponsorConfig,
   relay: DecodedRelay,
-): Promise<void> {
+): Promise<Hex> {
   const { sender, keyHash } = relay;
   const { caliburEntry, agentPolicyHook } = config.addresses;
   const read = <T>(address: Address, abi: unknown, functionName: string, args: unknown[]) =>
@@ -233,16 +249,20 @@ export async function verifyOnChain(
   const domain = delegated
     ? await readCaliburDomain(client, sender)
     : caliburDomain({ chainId: config.chainId, account: sender, implementation: caliburEntry });
-  if (!isKeySigner(await batchSigner(domain, relay), sender, keyHash)) {
+  const batchDigest = hashTypedData({
+    domain,
+    types: signedBatchedCallTypes,
+    primaryType: "SignedBatchedCall",
+    message: relay.signedBatchedCall,
+  });
+  if (!isKeySigner(await batchSigner(batchDigest, relay), sender, keyHash)) {
     reject(SponsorRejectCode.BAD_BATCH_SIGNATURE, `batch is not signed by ${keyHash}`);
   }
+  return batchDigest;
 }
 
 /** The signer of the batch as Calibur computes it (`hashTypedData(signedBatchedCall.hash())`). */
-async function batchSigner(
-  domain: Parameters<typeof hashTypedData>[0]["domain"],
-  relay: DecodedRelay,
-): Promise<Address> {
+async function batchSigner(hash: Hex, relay: DecodedRelay): Promise<Address> {
   const { wrappedSignature } = decodeExecute(relay.data);
   try {
     const [signature] = decodeAbiParameters(
@@ -250,12 +270,6 @@ async function batchSigner(
       wrappedSignature,
     );
     if (size(signature) !== 65) return zeroAddress;
-    const hash = hashTypedData({
-      domain,
-      types: signedBatchedCallTypes,
-      primaryType: "SignedBatchedCall",
-      message: relay.signedBatchedCall,
-    });
     return await recoverAddress({ hash, signature });
   } catch {
     return zeroAddress;

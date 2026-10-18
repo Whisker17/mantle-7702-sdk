@@ -1,10 +1,15 @@
 import { getChain } from "@mantle-aa/sdk";
 import { createPublicClient, http } from "viem";
 import { loadConfig } from "./config.js";
+import { Ledger } from "./ledger.js";
+import { loadRelayerAccount } from "./relayer.js";
 import { createSponsorServer } from "./server.js";
 import { SponsorStore } from "./store.js";
 
-/** Starts the sponsor from `--config <sponsor.yaml>`; resolves once it is listening. */
+/**
+ * Starts the sponsor from `--config <sponsor.yaml>`; resolves once it is listening. With a
+ * `relayerKey` it reconciles its ledger with the chain first, then pays for accepted requests.
+ */
 export async function main(argv: readonly string[]) {
   const path = argv[argv.indexOf("--config") + 1];
   if (!argv.includes("--config") || !path)
@@ -15,12 +20,18 @@ export async function main(argv: readonly string[]) {
     chain: getChain(config.chainId),
     transport: http(config.rpcUrl, { timeout: 10_000 }),
   });
-  const server = createSponsorServer({ config, client, store });
+  const ledger = config.relayerKeyEnv
+    ? new Ledger({ config, client, store, account: loadRelayerAccount(config) })
+    : undefined;
+  await ledger?.start();
+  const server = createSponsorServer({ config, client, store, ...(ledger ? { ledger } : {}) });
   const url = await server.listen();
   return {
     url,
+    ledger,
     async close() {
       await server.close();
+      await ledger?.close();
       store.close();
     },
   };

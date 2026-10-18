@@ -42,6 +42,16 @@ describe("sponsor config", () => {
     expect(config.maxRequestValiditySeconds).toBe(300);
   });
 
+  it("keeps only the name of the relayer key's variable, and the settlement wait", () => {
+    const plain = parseConfig(parse(yaml()), "/");
+    expect([plain.relayerKeyEnv, plain.settleTimeoutSeconds]).toEqual([undefined, 30]);
+    const config = parseConfig(
+      parse(`${yaml()}relayerKey: \${SPONSOR_RELAYER_KEY}\nsettleTimeoutSeconds: 5\n`),
+      "/",
+    );
+    expect([config.relayerKeyEnv, config.settleTimeoutSeconds]).toEqual(["SPONSOR_RELAYER_KEY", 5]);
+  });
+
   it("reads the RPC URL from the environment without echoing it", () => {
     process.env.SPONSOR_TEST_RPC = "https://user:secret@rpc.example";
     expect(parseConfig(parse(yaml(`\${SPONSOR_TEST_RPC}`)), "/").rpcUrl).toBe(
@@ -59,6 +69,11 @@ describe("sponsor config", () => {
     ["an unquoted amount", (s: string) => s.replace('"0.05"', "0.05"), /maxFeePerRequestMnt/],
     ["another chain", (s: string) => s.replace("5003", "5000"), /deployments/],
     ["a non-http RPC URL", (s: string) => s.replace("http://127.0.0.1:8545", "ws://x"), /http/],
+    [
+      "a relayer key written into the file",
+      (s: string) => `${s}relayerKey: "0x${"11".repeat(32)}"\n`,
+      /relayerKey must reference the environment variable/,
+    ],
   ])("rejects %s", (_, edit, message) => {
     expect(() => parseConfig(parse(edit(yaml())), "/")).toThrow(message);
   });
