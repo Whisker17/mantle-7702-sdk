@@ -18,10 +18,10 @@ describe.skipIf(!rpcUrl)("startFork", () => {
   }, 60_000);
 
   it("reports anvil's own error and redacts the fork URL", async () => {
-    // Nothing listens on port 1, so anvil cannot fetch the fork block.
+    // Nothing listens on port 1, so anvil cannot reach the fork RPC. The wording around the cause
+    // differs between anvil versions ("failed to get fork block number", "… network chain ID").
     const start = startFork("http://user:secret@127.0.0.1:1/key");
-    await expect(start).rejects.toThrow(/anvil exited with 1: .*failed to get fork block number/s);
-    await expect(start).rejects.toThrow(/Connection refused/);
+    await expect(start).rejects.toThrow(/^anvil exited with 1: Error: .*Connection refused/s);
     await expect(start).rejects.not.toThrow(/secret|key/);
   }, 60_000);
 });
