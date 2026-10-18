@@ -12,6 +12,7 @@ import {
   relayRequestDigest,
   SponsorRejectCode,
   secp256k1KeyHash,
+  signedBatchedCallTypes,
 } from "@mantle-aa/sdk";
 import {
   type Address,
@@ -237,25 +238,6 @@ export async function verifyOnChain(
   }
 }
 
-const batchTypes = {
-  SignedBatchedCall: [
-    { name: "batchedCall", type: "BatchedCall" },
-    { name: "nonce", type: "uint256" },
-    { name: "keyHash", type: "bytes32" },
-    { name: "executor", type: "address" },
-    { name: "deadline", type: "uint256" },
-  ],
-  BatchedCall: [
-    { name: "calls", type: "Call[]" },
-    { name: "revertOnFailure", type: "bool" },
-  ],
-  Call: [
-    { name: "to", type: "address" },
-    { name: "value", type: "uint256" },
-    { name: "data", type: "bytes" },
-  ],
-} as const;
-
 /** The signer of the batch as Calibur computes it (`hashTypedData(signedBatchedCall.hash())`). */
 async function batchSigner(
   domain: Parameters<typeof hashTypedData>[0]["domain"],
@@ -270,7 +252,7 @@ async function batchSigner(
     if (size(signature) !== 65) return zeroAddress;
     const hash = hashTypedData({
       domain,
-      types: batchTypes,
+      types: signedBatchedCallTypes,
       primaryType: "SignedBatchedCall",
       message: relay.signedBatchedCall,
     });
