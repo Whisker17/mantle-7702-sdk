@@ -88,12 +88,22 @@ jobs:
             echo "No contracts/test/invariant/ yet; skipping the fixed-seed invariant runs."
             exit 0
           fi
+          # forge exits 0 when no test matches, so each run must also report at least one passed
+          # test in its summary line ("Ran N test suite(s) in ...: P tests passed, ...").
+          log="$RUNNER_TEMP/invariants.log"
           for seed in 0x1 0x2 0x3; do
             echo "::group::Invariants, FOUNDRY_FUZZ_SEED=$seed"
-            if ! FOUNDRY_FUZZ_SEED="$seed" forge test --match-path 'test/invariant/**' -vvv; then
-              echo "::endgroup::"
+            status=0
+            FOUNDRY_FUZZ_SEED="$seed" forge test --match-path 'test/invariant/**' -vvv > "$log" 2>&1 || status=$?
+            cat "$log"
+            echo "::endgroup::"
+            if [ "$status" -ne 0 ]; then
               echo "::error::Invariant suite failed with FOUNDRY_FUZZ_SEED=$seed. Reproduce: cd contracts && FOUNDRY_FUZZ_SEED=$seed forge test --match-path 'test/invariant/**' -vvv"
               exit 1
             fi
-            echo "::endgroup::"
+            passed=$(tr -d '\033' < "$log" | sed -E 's/\[[0-9;]*m//g' | sed -nE 's/^Ran [0-9]+ test suites? in .*: ([0-9]+) tests passed,.*/\1/p' | tail -n 1)
+            if [ "${passed:-0}" -eq 0 ]; then
+              echo "::error::No invariant test ran with FOUNDRY_FUZZ_SEED=$seed: contracts/test/invariant/ exists but forge matched no passing test functions."
+              exit 1
+            fi
           done
