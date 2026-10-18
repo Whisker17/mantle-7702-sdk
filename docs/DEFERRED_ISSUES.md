@@ -31,7 +31,29 @@ soon — anything weakening an invariant of `docs/DESIGN.md` §4.2.5 defaults to
 
 ## Open
 
-_(none yet)_
+- **Malformed 65-byte paymaster signature reverts instead of returning signature failure** (Low, #11;
+  SR-01 in `docs/reviews/0.1.0.md`).
+  `contracts/src/VerifyingPaymaster.sol::_validatePaymasterUserOp` — a 65-byte signature with an
+  invalid recovery value or a noncanonical encoding reverts inside `ECDSA.recover` instead of
+  returning `SIG_VALIDATION_FAILED`; validation still fails closed (no sponsorship is authorised),
+  but gas-estimation and admission flows see a validation exception rather than a signature
+  failure. Deferred because the paymaster is deployed and the hook binds its address immutably: a
+  fix means redeploying the paymaster, re-funding its EntryPoint deposit, and re-mining and
+  redeploying the hook. Fix: use `ECDSA.tryRecover` and return
+  `_packValidationData(true, validUntil, validAfter)` on a recovery error or signer mismatch;
+  update `test_rejectsMalformedTimestampsAndSignature` accordingly. Revisit before any mainnet
+  deployment or whenever the paymaster is next redeployed, whichever comes first.
+- **Invariant campaign does not independently catch removal of two hook guards** (Info, #11;
+  SR-04 in `docs/reviews/0.1.0.md`).
+  `contracts/src/AgentPolicyHook.sol` (the `to == hook` rejection and the `beforeExecute` entry
+  lock check) / `contracts/test/invariant/AgentPolicyHook.invariant.t.sol` — removing either
+  guard is caught by the deterministic matrix and attack tests but not by the invariant campaign,
+  because the permission allowlist and the outer `afterExecute` `NotInExecution` failure mask the
+  missing guard. Deferred as a verification limitation, not an exploit. Until strengthened, the
+  deterministic matrix and attack tests (`TargetIsHook`, the exact inner `Reentrancy` error) must
+  stay mandatory. Optional strengthening per the review: add a deliberately permitted
+  hook-management attempt to the invariant handler and assert the specific nested re-entry
+  rejection instead of relying only on final balance conservation.
 
 ---
 
