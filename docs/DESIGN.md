@@ -673,7 +673,7 @@ Also:
   revert griefing is charged.
 - **E2E:** anvil fork + strict-mode (non-unsafe) Alto, both paths through §8; the Sepolia
   script produces a list of transaction links.
-- **Security review** (a contract checkpoint in 0.1.0 and a final review in 0.4.0):
+- **Security review** (a contract checkpoint in 0.1.0 and a final review in 0.1.3):
   `AgentPolicyHook` in full, the `VerifyingPaymaster` port diff and the sponsor signing
   logic, the Calibur v1.0.0 → v1.1.0 diff, the SDK guards I6 / I7; earlier releases have
   review checkpoints for what they deliver.
