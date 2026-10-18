@@ -135,7 +135,12 @@ async function waitForRpc(url: string, child: ChildProcess, timeoutMs: number, w
 }
 
 /** Spawns `cmd`, keeps its output for diagnostics, and kills it on stop and on process exit. */
-function own(cmd: string, args: string[], env?: NodeJS.ProcessEnv) {
+function own(
+  cmd: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+  onLine?: (line: string) => void,
+) {
   const child = spawn(cmd, args, {
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
@@ -144,7 +149,17 @@ function own(cmd: string, args: string[], env?: NodeJS.ProcessEnv) {
   const keep = (data: Buffer) => {
     output = (output + data.toString()).slice(-4_000_000);
   };
-  child.stdout?.on("data", keep);
+  let partial = "";
+  child.stdout?.on(
+    "data",
+    onLine
+      ? (data: Buffer) => {
+          const lines = (partial + data.toString()).split("\n");
+          partial = lines.pop() ?? "";
+          for (const line of lines) onLine(line);
+        }
+      : keep,
+  );
   child.stderr?.on("data", keep);
   child.on("error", (e) => keep(Buffer.from(`spawn error: ${e.message}\n`)));
   const kill = () => child.kill("SIGKILL");
@@ -165,14 +180,87 @@ function own(cmd: string, args: string[], env?: NodeJS.ProcessEnv) {
 export interface Fork extends Owned {
   /** JSON-RPC URL of the fork (chain id 5003). */
   url: string;
+  /** DIAGNOSTIC: every request anvil sent upstream. */
+  upstream: UpstreamCall[];
+}
+
+/** DIAGNOSTIC: one request anvil sent to the upstream RPC. */
+export interface UpstreamCall {
+  t: number;
+  ms: number;
+  status: number;
+  methods: string;
+  code?: number;
+}
+
+/** DIAGNOSTIC: upstream requests started in [since, until]: count, latency sum/max, statuses. */
+export function upstreamSummary(calls: UpstreamCall[], since: number, until = Date.now()) {
+  const window = calls.filter((c) => c.t >= since && c.t <= until);
+  const sum = window.reduce((a, c) => a + c.ms, 0);
+  const max = window.reduce((a, c) => Math.max(a, c.ms), 0);
+  const statuses: Record<string, number> = {};
+  const methods: Record<string, number> = {};
+  for (const c of window) {
+    const k = `${c.status}${c.code === undefined ? "" : `/${c.code}`}`;
+    statuses[k] = (statuses[k] ?? 0) + 1;
+    methods[c.methods] = (methods[c.methods] ?? 0) + 1;
+  }
+  return `upstream n=${window.length} sum=${sum}ms max=${max}ms avg=${window.length ? Math.round(sum / window.length) : 0}ms statuses=${JSON.stringify(statuses)} methods=${JSON.stringify(methods)}`;
+}
+
+/** `HH:MM:SS.mmm` in local time, as Alto's log stamps its entries. */
+const clock = (ms: number) =>
+  `${new Date(ms).toTimeString().slice(0, 8)}.${String(ms % 1000).padStart(3, "0")}`;
+
+/** DIAGNOSTIC: one line per Alto log entry since `since` (time, message, first RPC method). */
+export function altoBrief(log: string, since: number): string {
+  const from = clock(since);
+  const out: string[] = [];
+  let last = "";
+  let repeat = 0;
+  for (const entry of log.split(/\n(?=\[\d\d:\d\d:\d\d\.\d{3}\])/)) {
+    if (entry.slice(1, 13) < from || /"eth_(getBlockByNumber|blockNumber)"/.test(entry)) continue;
+    const head = (entry.split("\n")[0] ?? "").replace(
+      new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"),
+      "",
+    );
+    const method = entry.match(/"method": "(\w+)"/)?.[1] ?? "";
+    const message = entry.match(/"message": "([^"]{0,160})/)?.[1] ?? "";
+    const line = `${head} ${method} ${message}`.trim();
+    if (line.slice(15) === last) {
+      repeat++;
+      continue;
+    }
+    if (repeat) out.push(`  (×${repeat + 1})`);
+    repeat = 0;
+    last = line.slice(15);
+    out.push(line.slice(0, 300));
+  }
+  if (repeat) out.push(`  (×${repeat + 1})`);
+  return out.join("\n").slice(-30_000);
 }
 
 /** Starts anvil forking `upstreamRpcUrl` at its head (Prague rules, so EIP-7702 applies). */
 export async function startFork(upstreamRpcUrl: string, timeoutMs = 60_000): Promise<Fork> {
+  const upstream: UpstreamCall[] = [];
+  let listening: (port: number) => void = () => undefined;
+  const proxyPort = new Promise<number>((resolve) => {
+    listening = resolve;
+  });
+  const proxy = own(
+    process.execPath,
+    [fileURLToPath(new URL("./diag-upstream.mjs", import.meta.url))],
+    { UPSTREAM_RPC_URL: upstreamRpcUrl },
+    (line) => {
+      if (line.startsWith("listening ")) listening(Number(line.slice(10)));
+      else if (line.startsWith("{")) upstream.push(JSON.parse(line));
+    },
+  );
+  const via = `http://127.0.0.1:${await Promise.race([proxyPort, sleep(10_000, 0)])}`;
   const port = await freePort();
   const anvil = own("anvil", [
     "--fork-url",
-    upstreamRpcUrl,
+    via,
     "--port",
     String(port),
     "--hardfork",
@@ -180,13 +268,17 @@ export async function startFork(upstreamRpcUrl: string, timeoutMs = 60_000): Pro
     "--silent",
   ]);
   const url = `http://127.0.0.1:${port}`;
+  const stop = async () => {
+    await anvil.stop();
+    await proxy.stop();
+  };
   try {
     await waitForRpc(url, anvil.child, timeoutMs, "anvil");
   } catch (e) {
-    await anvil.stop();
+    await stop();
     throw e;
   }
-  return { url, stop: anvil.stop };
+  return { url, upstream, stop };
 }
 
 export interface Bundler extends Owned {
@@ -267,6 +359,8 @@ export const forkClient = (url: string): ForkClient =>
 export interface BundlerStack extends Owned {
   /** The anvil fork's JSON-RPC URL. */
   rpcUrl: string;
+  /** DIAGNOSTIC: every request anvil sent upstream. */
+  upstream: UpstreamCall[];
   bundler: Bundler;
   client: ForkClient;
 }
@@ -287,6 +381,7 @@ export async function startBundlerStack(upstreamRpcUrl: string): Promise<Bundler
     const bundler = await startAlto({ rpcUrl: fork.url, executorKey });
     return {
       rpcUrl: fork.url,
+      upstream: fork.upstream,
       bundler,
       client,
       stop: async () => {

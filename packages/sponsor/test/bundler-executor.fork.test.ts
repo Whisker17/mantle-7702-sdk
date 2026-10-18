@@ -33,6 +33,7 @@ import {
   type BundlerStack,
   setPaymasterSigner,
   startBundlerStack,
+  upstreamSummary,
 } from "../../../e2e/bundler/harness.js";
 import type { SponsorConfig } from "../src/config.js";
 import { startSponsor } from "../src/main.js";
@@ -135,7 +136,18 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
 
   it("initialises an undelegated account (root init UserOp with eip7702Auth, first grant) through the bundler", async () => {
     expect(await account.state()).toBe("UNDELEGATED");
+    const t0 = Date.now();
     const result = await account.init({ grant: { policy, agentName: "agent" } });
+    console.log(`[diag-step] init ${Date.now() - t0}ms ${upstreamSummary(stack.upstream, t0)}`);
+    const traced = stack.bundler.logs().includes("tracerResult");
+    console.log(`[diag-trace] tracerResult in log at receipt: ${traced}`);
+    if (!traced) {
+      const waited = Date.now();
+      while (!stack.bundler.logs().includes("tracerResult") && Date.now() - waited < 10_000) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      console.log(`[diag-trace] tracerResult after ${Date.now() - waited}ms`);
+    }
 
     expect(result.state).toBe("INITIALIZED");
     const hash = result.hash as Hex;

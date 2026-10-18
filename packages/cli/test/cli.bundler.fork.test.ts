@@ -7,9 +7,11 @@ import { type Address, encodeFunctionData, erc20Abi, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAddress } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  altoBrief,
   type BundlerStack,
   setPaymasterSigner,
   startBundlerStack,
+  upstreamSummary,
 } from "../../../e2e/bundler/harness.js";
 import { mockUsdAbi, THIRD_PARTY, walletFor } from "../../sdk/test/account/fork.js";
 import { run } from "../src/index.js";
@@ -101,7 +103,15 @@ describe.skipIf(!rpcUrl)(
       args: string[],
       code: number,
     ): Promise<CliResult> {
+      const started = Date.now();
       const result = await cli(args, env);
+      const took = Date.now() - started;
+      console.log(
+        `[diag-step] ${args.slice(0, 3).join(" ")} ${took}ms ${upstreamSummary(stack.upstream, started)}`,
+      );
+      if (took > 15_000) {
+        console.log(`[diag-slow] alto:\n${altoBrief(stack.bundler.logs(), started)}`);
+      }
       const output = result.stdout + result.stderr;
       expect(output).not.toMatch(/127\.0\.0\.1/);
       for (const secret of [PASSWORD, SIGNER_KEY.slice(2), EMBEDDED_RELAYER_KEY.slice(2)]) {
@@ -115,7 +125,9 @@ describe.skipIf(!rpcUrl)(
     }
 
     beforeAll(async () => {
+      const t0 = Date.now();
       stack = await startBundlerStack(rpcUrl as string);
+      console.log(`[diag-setup] stack ${Date.now() - t0}ms ${upstreamSummary(stack.upstream, t0)}`);
       await setPaymasterSigner(
         stack.client,
         book.verifyingPaymaster,

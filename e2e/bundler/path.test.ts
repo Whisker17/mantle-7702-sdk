@@ -70,7 +70,7 @@ import {
   privateKeyToAccount,
   privateKeyToAddress,
 } from "viem/accounts";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { run } from "../../packages/cli/src/index.js";
 import {
   type CliResult,
@@ -79,7 +79,13 @@ import {
   tempHome,
   testEnv,
 } from "../../packages/cli/test/helpers.js";
-import { type BundlerStack, setPaymasterSigner, startBundlerStack } from "./harness.js";
+import {
+  altoBrief,
+  type BundlerStack,
+  setPaymasterSigner,
+  startBundlerStack,
+  upstreamSummary,
+} from "./harness.js";
 import { bundlerRpc, sendSponsoredUserOp } from "./userop.js";
 
 const rpcUrl = process.env.MANTLE_SEPOLIA_RPC_URL;
@@ -340,6 +346,15 @@ function bundlerRun(mode: Mode) {
   async function s(args: string[], code: number): Promise<CliResult> {
     const started = Date.now();
     const result = await cli(args[0] === "keys" ? args : [...args, "--via", "bundler"], env);
+    const took = Date.now() - started;
+    console.log(
+      `[diag-step] ${mode} ${args.slice(0, 3).join(" ")} ${took}ms ${upstreamSummary(stack.upstream, started)}`,
+    );
+    if (took > 15_000) {
+      console.log(
+        `[diag-slow] alto since ${clock(started)}:\n${altoBrief(stack.bundler.logs(), started)}`,
+      );
+    }
     const output = result.stdout + result.stderr;
     expect(output).not.toMatch(/127\.0\.0\.1/);
     for (const secret of [PASSWORD, signerKey, relayerKey, checkRelayerKey]) {
@@ -565,8 +580,22 @@ function bundlerRun(mode: Mode) {
     for (const address of who) expect(await client.getBalance({ address }), address).toBe(0n);
   };
 
+  let testStarted = 0;
+  beforeEach(() => {
+    testStarted = Date.now();
+  });
+  afterEach((ctx) => {
+    console.log(
+      `[diag-test] ${mode} ${ctx.task.name.slice(0, 60)} ${Date.now() - testStarted}ms ${stack ? upstreamSummary(stack.upstream, testStarted) : ""}`,
+    );
+  });
+
   beforeAll(async () => {
+    const t0 = Date.now();
     stack = await startBundlerStack(rpcUrl as string);
+    console.log(
+      `[diag-setup] ${mode} stack ${Date.now() - t0}ms ${upstreamSummary(stack.upstream, t0)}`,
+    );
     client = stack.client;
     // Interval mining, a block every second, as on a live chain: Alto is built for a chain that
     // keeps producing blocks. On an automining fork it stalls: it frees its one executor wallet
@@ -681,6 +710,9 @@ function bundlerRun(mode: Mode) {
       expect(receipt.status).toBe("success");
     }
     expect(await balanceOf(MEME)).toBe(HUMAN_MEME);
+    console.log(
+      `[diag-setup] ${mode} beforeAll ${Date.now() - t0}ms ${upstreamSummary(stack.upstream, t0)}`,
+    );
   }, 420_000);
 
   afterAll(async () => {
