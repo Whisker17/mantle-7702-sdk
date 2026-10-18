@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
-# Start / stop the feasibility-spike bundler stack for Mantle Sepolia (throwaway):
+# Start / stop the strict bundler stack against the real Mantle Sepolia chain:
 #   anvil fork (tracing node) <- trace-proxy.mjs (debug_* only) <- Alto (safe mode, EP v0.8)
 #                                trace-proxy.mjs (everything else) -> upstream Mantle Sepolia RPC
+# The public RPC rejects debug_*, hence the proxy; on a fork the harness (harness.ts) needs none.
 #
-# Alto is installed pinned into the run directory (outside the workspace). Unless ALTO_PATCH=0,
-# alto-safe-validator.patch is applied: stock Alto cannot decode the safe-mode validation result
-# for EntryPoint v0.7+ (see docs/infra.md); the patch fixes only that decoding.
+# Alto is installed with `npm ci` from alto/package-lock.json into the run directory (outside the
+# workspace). Unless ALTO_PATCH=0, alto/safe-validator.patch is applied: stock Alto cannot decode
+# the safe-mode validation result for EntryPoint v0.7+ (see docs/infra.md); the patch fixes only
+# that decoding.
 #
-# Usage: e2e/spike/bundler.sh up|down|status
+# Usage: e2e/bundler/sepolia.sh up|down|status
 # Env (up): BUNDLER_PRIVATE_KEY  executor + utility key for Alto (passed to Alto through its
 #                                ALTO_* environment variables, never on a command line)
 #           UPSTREAM_RPC_URL     default https://rpc.sepolia.mantle.xyz
-#           SPIKE_RUN_DIR        pid, log and install files, default $HOME/.mantle-aa/spike-run
+#           BUNDLER_RUN_DIR      pid, log and install files, default $HOME/.mantle-aa/bundler-run
 #           ALTO_PORT            default 4337
 #           ALTO_PATCH           1 (default) patched, 0 stock
 set -euo pipefail
 
-ALTO_VERSION=0.0.21
 ENTRY_POINT_V08=0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108
 UPSTREAM_RPC_URL=${UPSTREAM_RPC_URL:-https://rpc.sepolia.mantle.xyz}
-RUN_DIR=${SPIKE_RUN_DIR:-$HOME/.mantle-aa/spike-run}
+RUN_DIR=${BUNDLER_RUN_DIR:-$HOME/.mantle-aa/bundler-run}
 ALTO_PORT=${ALTO_PORT:-4337}
 ALTO_PATCH=${ALTO_PATCH:-1}
 ANVIL_PORT=18545
@@ -50,7 +51,7 @@ stop() {
 
 wait_rpc() {
 	for _ in $(seq 1 60); do
-		curl -sf -X POST -H 'content-type: application/json' \
+		curl -sf -m 5 -X POST -H 'content-type: application/json' \
 			--data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$1" >/dev/null && return 0
 		sleep 1
 	done
@@ -58,13 +59,17 @@ wait_rpc() {
 	return 1
 }
 
-# Prints the alto binary of a pinned (and, unless ALTO_PATCH=0, patched) install.
+# Prints the alto binary of the pinned (and, unless ALTO_PATCH=0, patched) install.
 install_alto() {
-	local dir="$RUN_DIR/alto-$ALTO_VERSION-patch$ALTO_PATCH"
+	local key dir
+	key=$(cat "$HERE/alto/package-lock.json" "$HERE/alto/safe-validator.patch" | shasum -a 256 | cut -c1-12)
+	dir="$RUN_DIR/alto-$key-patch$ALTO_PATCH"
 	if [[ ! -x $dir/node_modules/.bin/alto ]]; then
-		npm install --silent --no-fund --no-audit --prefix "$dir" "@pimlico/alto@$ALTO_VERSION" >&2
+		mkdir -p "$dir"
+		cp "$HERE/alto/package.json" "$HERE/alto/package-lock.json" "$dir/"
+		(cd "$dir" && npm ci --silent --no-fund --no-audit --ignore-scripts) >&2
 		if [[ $ALTO_PATCH == 1 ]]; then
-			patch -s -p1 -d "$dir/node_modules/@pimlico/alto" <"$HERE/alto-safe-validator.patch" >&2
+			patch -s -p1 -d "$dir/node_modules/@pimlico/alto" <"$HERE/alto/safe-validator.patch" >&2
 		fi
 	fi
 	echo "$dir/node_modules/.bin/alto"
@@ -99,10 +104,11 @@ start() {
 		--refilling-wallets false \
 		--deploy-simulations-contract true \
 		--log-level info \
+		--public-client-log-level warn \
 		>"$RUN_DIR/alto.log" 2>&1 &
 	echo $! >"$RUN_DIR/alto.pid"
 	wait_rpc "http://127.0.0.1:$ALTO_PORT"
-	echo "alto $ALTO_VERSION (safe mode, patch=$ALTO_PATCH) on http://127.0.0.1:$ALTO_PORT; logs in $RUN_DIR"
+	echo "alto (safe mode, patch=$ALTO_PATCH) on http://127.0.0.1:$ALTO_PORT; logs in $RUN_DIR"
 }
 
 case ${1:-} in

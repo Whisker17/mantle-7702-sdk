@@ -1,7 +1,7 @@
 # e2e
 
-End-to-end suites: an anvil fork of Mantle Sepolia (later with a strict-mode Alto bundler), and the
-Mantle Sepolia acceptance script (`docs/DESIGN.md` §8, §9). Vitest collects every
+End-to-end suites: an anvil fork of Mantle Sepolia (with a strict-mode Alto bundler for the bundler
+path), and the Mantle Sepolia acceptance script (`docs/DESIGN.md` §8, §9). Vitest collects every
 `e2e/**/*.test.ts`; like the `*.fork.test.ts` suites they skip without `MANTLE_SEPOLIA_RPC_URL`,
 and CI fails when one of them skips or passes nothing.
 
@@ -30,3 +30,26 @@ embedded mode (`MANTLE_AA_EMBEDDED_RELAYER=1`, no service). Each run has its own
 ```bash
 MANTLE_SEPOLIA_RPC_URL=https://rpc.sepolia.mantle.xyz pnpm exec vitest run e2e
 ```
+
+## `bundler/` — the strict-mode bundler
+
+The settled setup is in `docs/infra.md` §10: Alto 0.0.21 in safe mode against EntryPoint v0.8,
+with `alto/safe-validator.patch`. Alto's whole dependency tree is pinned by
+`alto/package-lock.json` and installed with `npm ci` outside the pnpm workspace.
+
+- `harness.ts`: what a fork suite starts and stops itself. `startBundlerStack(upstreamRpcUrl)`
+  starts an anvil fork and Alto on it, with a random executor key funded on the fork. It returns
+  `{ rpcUrl, client, bundler: { url, entryPoint, executor, logs }, stop }`. `startFork` and
+  `startAlto({ rpcUrl, executorKey })` are its two halves. `setPaymasterSigner` swaps the deployed
+  VerifyingPaymaster's signer on a fork for a key the test holds. Ports are random, every wait is
+  bounded, and `stop()` kills every process.
+- `userop.ts`: `sendSponsoredUserOp` builds, sizes, sponsors (paymaster data signed directly with
+  the signer key), signs, sends and awaits one UserOp for a Calibur account.
+- `bundler.test.ts`: the smoke suite. A fresh EOA's root init UserOp with `eip7702Auth`,
+  sponsored by the deployed paymaster, lands as a type-4 bundle.
+- `sepolia.sh`, `trace-proxy.mjs`, `land-sepolia.ts`: the same Alto against the real chain, with
+  `debug_*` traced on a local anvil fork, and the script that landed the UserOp in
+  `docs/infra.md` §10.3.
+
+`spike/userop.sh` is the 0.1.0 spike's UserOp builder. It signs in SpikePaymaster's layout, so it
+does not work with the deployed paymaster.
