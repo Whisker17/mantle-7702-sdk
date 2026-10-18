@@ -388,9 +388,17 @@ npm lockfile pins the tree just as exactly. The cost is one `npm ci` per fresh m
 runner, every run is fresh. Measured locally: about 20 s with a warm npm cache.
 
 **Alto flags (both setups):** `--entrypoints 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108
---safe-mode true --chain-type mantle --refilling-wallets false --deploy-simulations-contract true
---log-level info --public-client-log-level warn`, plus `--rpc-url` and `--port`. The harness sets
-`--block-time 1000`; `sepolia.sh` sets `--block-time 2000`. The executor and utility key go in
+--safe-mode true --chain-type mantle --refilling-wallets false --log-level info`, plus `--rpc-url`
+and `--port`. The two setups differ in three flags:
+
+- **`sepolia.sh`:** `--block-time 2000 --deploy-simulations-contract true
+  --public-client-log-level warn`. The simulation contracts' CREATE2 salt is the utility key's
+  address. With the 0.1.0 executor key they already exist (§3.1), so nothing is deployed.
+- **The harness:** `--block-time 1000 --deploy-simulations-contract false`, and it passes those
+  same four addresses (`--pimlico-simulation-contract`,
+  `--entrypoint-simulation-contract-v7/-v8/-v9`). With a random executor key, Alto would otherwise
+  deploy a fresh set on every fork at startup, and each deployment needs lazy fork fetches from
+  the upstream RPC. The executor and utility key go in
 through `ALTO_EXECUTOR_PRIVATE_KEYS` / `ALTO_UTILITY_PRIVATE_KEY`, never on a command line. All
 other options keep Alto's defaults (`--min-entity-stake 1`, `--min-entity-unstake-delay 1`,
 `--eip-7702-support true`). Alto's own RPC timeout is a fixed 10 s.
@@ -410,8 +418,8 @@ CI's `typescript` job has.
   VerifyingPaymaster's `verifyingSigner` immutable in the runtime code (two occurrences) for an
   address whose key the test holds, and asserts the result through `verifyingSigner()`. The
   address, the logic and the EntryPoint deposit stay the same.
-- Ports are random free ports. Every wait is bounded: anvil 60 s, the install 300 s, Alto 120 s
-  each, a bundler request 60 s, the receipt 120 s. `stop()` sends SIGTERM, then SIGKILL after
+- Ports are random free ports. Every wait is bounded: anvil 60 s, the install 300 s, Alto 240 s,
+  a bundler request 60 s, the receipt 120 s. `stop()` sends SIGTERM, then SIGKILL after
   10 s. Every child is also killed when the test process exits.
 - The verification-gas headroom stays at 150 % of Alto's estimate, because the tracing node is
   still anvil (§3.5).

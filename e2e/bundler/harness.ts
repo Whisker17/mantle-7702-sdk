@@ -35,6 +35,22 @@ const ALTO_DIR = fileURLToPath(new URL("./alto/", import.meta.url));
 const PATCH = join(ALTO_DIR, "safe-validator.patch");
 const run = promisify(execFile);
 
+/**
+ * Alto's simulation contracts on Mantle Sepolia (CREATE2 with the salt of the 0.1.0 utility key,
+ * docs/infra.md §3.1). Passing them avoids deploying a fresh set on every fork at startup, which
+ * needs many lazy fork fetches from the upstream RPC.
+ */
+const SIMULATION_CONTRACTS = [
+  "--pimlico-simulation-contract",
+  "0xf050608D8c131296BccA23A992E4F3f1135790a7",
+  "--entrypoint-simulation-contract-v7",
+  "0xcD13a28aF05Dc14Fba6e5ea95bBbC425248C2DC7",
+  "--entrypoint-simulation-contract-v8",
+  "0xcfFF0eb14cbA7ce1437190d4c856a47a9374e354",
+  "--entrypoint-simulation-contract-v9",
+  "0xC53c61c137986366E676B6F2A854947E8fF9e472",
+];
+
 /** A started process the harness owns; `stop` is idempotent. */
 interface Owned {
   stop: () => Promise<void>;
@@ -126,7 +142,7 @@ function own(cmd: string, args: string[], env?: NodeJS.ProcessEnv) {
   });
   let output = "";
   const keep = (data: Buffer) => {
-    output = (output + data.toString()).slice(-2_000_000);
+    output = (output + data.toString()).slice(-4_000_000);
   };
   child.stdout?.on("data", keep);
   child.stderr?.on("data", keep);
@@ -196,7 +212,7 @@ export interface AltoOptions {
 export async function startAlto({
   rpcUrl,
   executorKey,
-  timeoutMs = 120_000,
+  timeoutMs = 240_000,
 }: AltoOptions): Promise<Bundler> {
   const cli = await installAlto();
   const port = await freePort();
@@ -219,12 +235,11 @@ export async function startAlto({
       "--refilling-wallets",
       "false",
       "--deploy-simulations-contract",
-      "true",
+      "false",
+      ...SIMULATION_CONTRACTS,
+      // Info level includes every RPC request Alto makes, so a stall shows what it waited on.
       "--log-level",
       "info",
-      // Every RPC request at info level would drown the validation and bundling lines.
-      "--public-client-log-level",
-      "warn",
     ],
     { ALTO_EXECUTOR_PRIVATE_KEYS: executorKey, ALTO_UTILITY_PRIVATE_KEY: executorKey },
   );
