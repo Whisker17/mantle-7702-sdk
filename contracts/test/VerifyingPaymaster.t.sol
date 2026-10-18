@@ -29,7 +29,9 @@ import {PaymasterTestBase} from "./paymaster/PaymasterTestBase.sol";
 /// @notice `validatePaymasterUserOp` called directly as the EntryPoint: the signed field set,
 ///         the delegate binding and the `paymasterAndData` parsing.
 contract VerifyingPaymasterTest is PaymasterTestBase {
+    // forge-lint: disable-next-line(unsafe-typecast)
     uint48 internal constant UNTIL = uint48(T0 + 1 hours);
+    // forge-lint: disable-next-line(unsafe-typecast)
     uint48 internal constant AFTER = uint48(T0 - 1);
     uint256 internal constant SIG_FAILED = 1;
 
