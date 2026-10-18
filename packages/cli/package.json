@@ -1,6 +1,6 @@
 {
   "name": "@mantle-aa/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "exports": {
@@ -11,5 +11,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json"
+  },
+  "bin": {
+    "mantle-aa": "./dist/bin.js"
+  },
+  "dependencies": {
+    "@mantle-aa/sdk": "workspace:*",
+    "@mantle-aa/sponsor": "workspace:*",
+    "viem": "2.57.7"
   }
 }

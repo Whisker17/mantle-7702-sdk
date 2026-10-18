@@ -1,0 +1,581 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`chain commands before any chain access > account exec: malformed calls and release tuples 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account exec",
+    "error": {
+      "code": "USAGE",
+      "message": "--calls is not valid JSON",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > account exec: malformed calls and release tuples 2`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account exec",
+    "error": {
+      "code": "USAGE",
+      "message": "--calls[0].to must be an address",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > account exec: malformed calls and release tuples 3`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account exec",
+    "error": {
+      "code": "USAGE",
+      "message": "--release must be <keyHash>,<token>,<amount>",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > account exec: no RPC URL 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account exec",
+    "error": {
+      "code": "USAGE",
+      "message": "no RPC URL: pass --rpc-url or set MANTLE_AA_RPC_URL",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > account init: --grant without --agent 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account init",
+    "error": {
+      "code": "USAGE",
+      "message": "--grant and --agent go together",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > account init: a policy file with an unknown key 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account init",
+    "error": {
+      "code": "USAGE",
+      "message": "policy has unknown keys: maxValue",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > account init: no RPC URL 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account init",
+    "error": {
+      "code": "USAGE",
+      "message": "no RPC URL: pass --rpc-url or set MANTLE_AA_RPC_URL",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > account panic: not available in this version 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account panic",
+    "error": {
+      "code": "NOT_AVAILABLE",
+      "message": "account panic is not available in this version",
+      "type": "NotAvailableError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > account status: an unreachable RPC; its URL never shows 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account status",
+    "error": {
+      "code": "ERROR",
+      "message": "HTTP request failed.",
+      "type": "HttpRequestError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > account status: no RPC URL 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account status",
+    "error": {
+      "code": "USAGE",
+      "message": "no RPC URL: pass --rpc-url or set MANTLE_AA_RPC_URL",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > account status: two root profiles need --root 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account status",
+    "error": {
+      "code": "USAGE",
+      "message": "2 root profiles match; pass --root <name>",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > account status: two root profiles need --root 2`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account status",
+    "error": {
+      "code": "USAGE",
+      "message": "no root profile "nope"",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > agent exec --via bundler: not available in this version 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "agent exec",
+    "error": {
+      "code": "NOT_AVAILABLE",
+      "message": "agent exec --via bundler is not available in this version",
+      "type": "NotAvailableError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > agent exec: an unknown agent profile 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "agent exec",
+    "error": {
+      "code": "USAGE",
+      "message": "no profile "ghost"",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > agent simulate: an unknown agent profile 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "agent simulate",
+    "error": {
+      "code": "USAGE",
+      "message": "no profile "ghost"",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > session grant: archives the agent's current profile once, even when the grant is retried 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "session grant",
+    "error": {
+      "code": "USAGE",
+      "message": "profile root is not an agent profile",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > session grant: no RPC URL 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "session grant",
+    "error": {
+      "code": "USAGE",
+      "message": "no RPC URL: pass --rpc-url or set MANTLE_AA_RPC_URL",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > session list: no RPC URL 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "session list",
+    "error": {
+      "code": "USAGE",
+      "message": "no RPC URL: pass --rpc-url or set MANTLE_AA_RPC_URL",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > session revoke: an unknown agent profile 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "session revoke",
+    "error": {
+      "code": "USAGE",
+      "message": "no profile "ghost"",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > session update / revoke and agent commands refuse a root profile as agent 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "session revoke",
+    "error": {
+      "code": "USAGE",
+      "message": "profile root is not an agent profile",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > session update: an unknown agent profile 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "session update",
+    "error": {
+      "code": "USAGE",
+      "message": "no profile "ghost"",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`command line > unknown commands and options are usage errors (exit 1) 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": null,
+    "error": {
+      "code": "USAGE",
+      "message": "unknown command "account frobnicate"",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`command line > unknown commands and options are usage errors (exit 1) 2`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "keys list",
+    "error": {
+      "code": "USAGE",
+      "message": "Unknown option '--bogus'",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`command line > unknown commands and options are usage errors (exit 1) 3`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "keys list",
+    "error": {
+      "code": "USAGE",
+      "message": "unexpected argument "extra"",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`keys > import: reads the key from stdin, never from argv 1`] = `
+{
+  "code": 0,
+  "json": {
+    "command": "keys import",
+    "ok": true,
+    "result": {
+      "account": "<address>",
+      "keyfile": "<home>/.mantle-aa/keys/imported.json",
+      "name": "imported",
+    },
+  },
+}
+`;
+
+exports[`keys > import: rejects malformed input without echoing it 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "keys import",
+    "error": {
+      "code": "USAGE",
+      "message": "the private key must be 32 bytes of 0x-prefixed hex",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`keys > list: keys and profiles 1`] = `
+{
+  "code": 0,
+  "json": {
+    "command": "keys list",
+    "ok": true,
+    "result": {
+      "keys": [
+        {
+          "address": "<address>",
+          "keyfile": "imported.json",
+        },
+        {
+          "address": "<address>",
+          "keyfile": "root.json",
+        },
+      ],
+      "profiles": [
+        {
+          "account": "<address>",
+          "keyHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "keyfile": "root.json",
+          "name": "root",
+          "role": "root",
+        },
+        {
+          "account": "<address>",
+          "keyHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "keyfile": "imported.json",
+          "name": "imported",
+          "role": "root",
+        },
+      ],
+    },
+  },
+}
+`;
+
+exports[`keys > new: creates an encrypted key and its root profile 1`] = `
+{
+  "code": 0,
+  "json": {
+    "command": "keys new",
+    "ok": true,
+    "result": {
+      "account": "<address>",
+      "keyfile": "<home>/.mantle-aa/keys/root.json",
+      "name": "root",
+    },
+  },
+}
+`;
+
+exports[`keys > new: fails without a password when no terminal can prompt 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "keys new",
+    "error": {
+      "code": "USAGE",
+      "message": "no keystore password: set MANTLE_AA_KEYSTORE_PASSWORD or run in a terminal",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`keys > new: refuses an existing profile name 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "keys new",
+    "error": {
+      "code": "USAGE",
+      "message": "profile root already exists",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`sponsor > relayer bump: --config is required 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "sponsor relayer bump",
+    "error": {
+      "code": "USAGE",
+      "message": "--config is required",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`sponsor > relayer cancel: --config is required 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "sponsor relayer cancel",
+    "error": {
+      "code": "USAGE",
+      "message": "--config is required",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`sponsor > relayer status: --config is required 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "sponsor relayer status",
+    "error": {
+      "code": "USAGE",
+      "message": "--config is required",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`sponsor > serve: --config is required 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "sponsor serve",
+    "error": {
+      "code": "USAGE",
+      "message": "--config is required",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`sponsor > serve: an invalid config 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "sponsor serve",
+    "error": {
+      "code": "ERROR",
+      "message": "policy must be a mapping",
+      "type": "Error",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
