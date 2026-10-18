@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { type Address, type Client, getAddress, isAddress, isHex } from "viem";
+import { type Address, type Client, getAddress, isHex } from "viem";
 import {
   type ExecRequest,
   type ExecResult,
@@ -8,15 +8,14 @@ import {
   signBatchedCall,
 } from "../account/executor.js";
 import { type AddressBook, loadDeployments } from "../deployments.js";
-import { SponsorBusyError, SponsorRejectedError } from "../errors.js";
+import { SponsorRejectedError } from "../errors.js";
 import {
   type RelayRequest,
   type RelayResult,
-  SPONSOR_REJECTED_RPC_CODE,
   SPONSOR_RELAY_METHOD,
-  SponsorRejectCode,
   signRelayRequest,
 } from "../sponsor/request.js";
+import { type Endpoint, jsonRpc, readSponsorAddress, sponsorRpcError } from "./http.js";
 
 export interface RelayerExecutorOptions {
   /** Reads the Calibur nonce and domain of the account the batch is for. */
@@ -52,7 +51,7 @@ const STATUSES = new Set(["pending", "success", "reverted", "cancelled"]);
 export class RelayerExecutor implements Executor {
   readonly kind = "relayer" as const;
   readonly #client: Client;
-  readonly #url: string;
+  readonly #sponsor: Endpoint;
   readonly #addresses: AddressBook;
   readonly #timeoutMs: number;
   readonly #pollIntervalMs: number;
@@ -60,16 +59,20 @@ export class RelayerExecutor implements Executor {
 
   constructor(options: RelayerExecutorOptions) {
     this.#client = options.client;
-    this.#url = options.url.replace(/\/+$/, "");
     this.#addresses = options.addresses ?? loadDeployments();
     this.#timeoutMs = options.timeoutMs ?? 120_000;
+    this.#sponsor = {
+      label: "Sponsor",
+      url: options.url.replace(/\/+$/, ""),
+      timeoutMs: this.#timeoutMs,
+    };
     this.#pollIntervalMs = options.pollIntervalMs ?? 1000;
     if (options.relayer) this.#relayer = Promise.resolve(getAddress(options.relayer));
   }
 
   /** The sponsor's relayer address. */
   relayer(): Promise<Address> {
-    this.#relayer ??= this.#health().catch((error) => {
+    this.#relayer ??= readSponsorAddress(this.#sponsor, this.#addresses.chainId).catch((error) => {
       this.#relayer = undefined;
       throw error;
     });
@@ -134,68 +137,15 @@ export class RelayerExecutor implements Executor {
   }
 
   async #relay(request: RelayRequest, deadline: number): Promise<RelayResult> {
-    const body = await this.#fetch(this.#url, deadline, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: SPONSOR_RELAY_METHOD,
-        params: [request],
-      }),
-    });
-    const { result, error } = (body ?? {}) as { result?: unknown; error?: unknown };
-    if (error !== undefined) throw rpcError(error);
+    const result = await jsonRpc(
+      this.#sponsor,
+      SPONSOR_RELAY_METHOD,
+      [request],
+      deadline,
+      sponsorRpcError,
+    );
     return relayResult(result);
   }
-
-  async #health(): Promise<Address> {
-    const body = (await this.#fetch(`${this.#url}/health`, Date.now() + this.#timeoutMs)) as {
-      chainId?: unknown;
-      sponsor?: unknown;
-    };
-    if (typeof body?.sponsor !== "string" || !isAddress(body.sponsor, { strict: false })) {
-      throw new Error("Sponsor health reports no relayer address");
-    }
-    if (body.chainId !== this.#addresses.chainId) {
-      throw new Error(`Sponsor chain ${body.chainId} is not ${this.#addresses.chainId}`);
-    }
-    return getAddress(body.sponsor);
-  }
-
-  /** One HTTP call, aborted at `deadline` (ms since epoch); resolves to the parsed JSON body. */
-  async #fetch(url: string, deadline: number, init: RequestInit = {}): Promise<unknown> {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error(`Sponsor did not answer within ${this.#timeoutMs} ms`);
-    let res: Response;
-    try {
-      res = await fetch(url, { ...init, signal: AbortSignal.timeout(remaining) });
-    } catch (error) {
-      if ((error as Error)?.name === "TimeoutError") {
-        throw new Error(`Sponsor did not answer within ${this.#timeoutMs} ms`);
-      }
-      throw new Error(`Sponsor unreachable: ${(error as Error)?.message}`, { cause: error });
-    }
-    if (!res.ok) throw new Error(`Sponsor answered HTTP ${res.status}`);
-    try {
-      return await res.json();
-    } catch {
-      throw new Error("Sponsor answered with invalid JSON");
-    }
-  }
-}
-
-/** Maps a JSON-RPC error to the SDK error model. */
-function rpcError(error: unknown): Error {
-  const e = (error ?? {}) as { code?: unknown; message?: unknown; data?: unknown };
-  const data = (e.data ?? {}) as { reason?: unknown; detail?: unknown };
-  if (e.code === SPONSOR_REJECTED_RPC_CODE && typeof data.reason === "string") {
-    if (data.reason === SponsorRejectCode.SPONSOR_BUSY) return new SponsorBusyError();
-    const rejected = new SponsorRejectedError({ reason: data.reason });
-    if (typeof data.detail === "string" && data.detail) rejected.message += ` (${data.detail})`;
-    return rejected;
-  }
-  return new Error(`Sponsor error ${String(e.code)}: ${String(e.message)}`);
 }
 
 /** Validates the sponsor's (untrusted) `sponsor_relay` result. */
