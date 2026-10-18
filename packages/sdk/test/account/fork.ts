@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   type Chain,
   createPublicClient,
@@ -25,14 +26,34 @@ const ANVIL_MNEMONIC = "test test test test test test test test test test test j
 export const RELAYER = mnemonicToAccount(ANVIL_MNEMONIC, { addressIndex: 1 });
 export const THIRD_PARTY = mnemonicToAccount(ANVIL_MNEMONIC, { addressIndex: 2 });
 
+const FORK_ATTEMPTS = 3;
+
 /**
  * Starts anvil forking Mantle Sepolia (Prague, so EIP-7702 applies) and returns its URL. anvil
  * binds a port the OS picks (`--port 0`) and reports it; a start that fails or does not listen
- * within `timeoutMs` rejects with the tail of anvil's output, URLs redacted.
+ * within `timeoutMs` rejects with the tail of anvil's output, URLs redacted. anvil exits when the
+ * upstream RPC fails while it builds the fork (e.g. HTTP 429 under parallel suites), so an exited
+ * start is retried, up to FORK_ATTEMPTS in all; a failure that persists still rejects.
  */
 export async function startFork(
   rpcUrl: string,
   timeoutMs = 30_000,
+): Promise<{ url: string; stop: () => void }> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await startAnvil(rpcUrl, timeoutMs);
+    } catch (e) {
+      const message = (e as Error).message;
+      if (!message.startsWith("anvil exited")) throw e;
+      if (attempt === FORK_ATTEMPTS) throw new Error(`${message}\n(${attempt} attempts)`);
+      await sleep(1_000 * attempt);
+    }
+  }
+}
+
+async function startAnvil(
+  rpcUrl: string,
+  timeoutMs: number,
 ): Promise<{ url: string; stop: () => void }> {
   const anvil = spawn("anvil", ["--fork-url", rpcUrl, "--port", "0", "--hardfork", "prague"]);
   let output = "";
