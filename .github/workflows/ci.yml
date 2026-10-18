@@ -52,8 +52,9 @@ jobs:
         run: pnpm test --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/vitest.json"
 
       # The fork suites skip themselves without MANTLE_SEPOLIA_RPC_URL, which would leave the
-      # Test step green while running none of them. Fail if a fork suite (*.fork.test.ts, or a
-      # suite under e2e/) was not collected, skipped any test, or passed none.
+      # Test step green while running none of them. Fail if a fork suite (a tracked
+      # *.fork.test.ts or e2e/**/*.test.ts, or a collected suite under e2e/) was not collected,
+      # skipped any test, or passed none.
       - name: Fork suites ran
         run: |
           node - "$RUNNER_TEMP/vitest.json" <<'EOF'
@@ -63,7 +64,9 @@ jobs:
           const isFork = (f) => f.endsWith(".fork.test.ts") || f.startsWith("e2e/");
           const report = JSON.parse(readFileSync(process.argv[2], "utf8"));
           const ran = new Map(report.testResults.map((r) => [relative(process.cwd(), r.name), r]));
-          const tracked = execFileSync("git", ["ls-files", "*.fork.test.ts"], { encoding: "utf8" })
+          const tracked = execFileSync("git", ["ls-files", "*.fork.test.ts", ":(glob)e2e/**/*.test.ts"], {
+            encoding: "utf8",
+          })
             .split("\n")
             .filter(Boolean);
           const files = [...new Set([...tracked, ...[...ran.keys()].filter(isFork)])].sort();
