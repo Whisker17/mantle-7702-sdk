@@ -60,7 +60,7 @@ export interface RelayerStatus {
   /** The nonce the next submission takes: `max(pending, highest nonce signed + 1)`. */
   nextNonce: number;
   /** Relayer requests not settled yet, oldest first, with every transaction signed for them. */
-  open: (LedgerEntry & { attempts: AttemptStatus[] })[];
+  open: (Omit<LedgerEntry, "paymaster"> & { attempts: AttemptStatus[] })[];
 }
 
 export interface ReplaceOptions {
@@ -160,7 +160,7 @@ export class Ledger {
       latest,
       pending,
       nextNonce: this.#nextNonce(pending),
-      open: this.#relayed(OPEN_STATES).map((e) => ({
+      open: this.#relayed(OPEN_STATES).map(({ paymaster: _, ...e }) => ({
         ...e,
         attempts: this.#store.attempts(e.digest).map(({ raw, ...a }) => {
           const { maxFeePerGas = 0n, maxPriorityFeePerGas = 0n } = parseTransaction(raw);
