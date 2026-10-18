@@ -79,5 +79,115 @@
     "depositTx": "0xa2a78f620862fc2cff65cc80f3f51f81583e09bea80a469cbf7f3c4c0d8b586a",
     "depositBlock": 45377601,
     "sourceNote": "source.commit is the branch commit the bytecode was built from; contracts/src/VerifyingPaymaster.sol there is git blob 3cb6bb318ee395bd20397f0dc33e1d2d8e0c8a61. initCodeHash = keccak256(creationCode ++ constructorArgs.encoded) with the default profile. depositWei is the initial EntryPoint deposit (depositTx); the live balance is EntryPoint.balanceOf(address)."
+  },
+  "AgentPolicyHook": {
+    "address": "0xdC99279cc8858a109A0dE31b021D54EBe30aDd7F",
+    "deployTx": "0x023a7dc894e045a2975476e5d07f846fbf0cb4650005e80d12cf7dc942d1da4e",
+    "block": 45378067,
+    "deployer": "0x671542Cd062a5de9194817659e46FE02A64eE392",
+    "method": "create2-deterministic",
+    "factory": "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+    "salt": "0x000000000000000000000000000000000000000000000000000000000000000f",
+    "initCodeHash": "0x9f84aa4009c6fabe453efee225a4c7bf063ca93d38d8e28320e3b57fc49bfa99",
+    "runtimeCodeHash": "0xb9dd9f5dfabd887fc805c2c7857da74ede679f325aad683e66e4603a8df7ed77",
+    "compiler": {
+      "solc": "0.8.29+commit.ab55807c",
+      "evmVersion": "prague",
+      "optimizer": true,
+      "optimizerRuns": 1000,
+      "viaIr": false,
+      "bytecodeHash": "ipfs",
+      "foundryProfile": "default"
+    },
+    "source": {
+      "submodule": "contracts/src",
+      "repository": "https://github.com/Whisker17/mantle-7702-sdk",
+      "tag": null,
+      "commit": "b4029c00ac241c0e4a1a91610b00d65ef920750e",
+      "contract": "src/AgentPolicyHook.sol:AgentPolicyHook"
+    },
+    "flags": "0x1f",
+    "paymaster": "0x301813D34cBebdf90FEBf32929CfB323c9eF3B4C",
+    "sourceNote": "initCodeHash = keccak256(creationCode ++ abi.encode(paymaster)) with the default profile; salt is the first counter from 0 whose CREATE2 address has low five bits 0x1f (script/DeployHook.s.sol mineSalt)."
+  },
+  "MockUSD": {
+    "address": "0xDA74D3F269F4aF7a3a5eFFf81Bf64384De327526",
+    "deployTx": "0xec3452d60fe6c4ebde0f0e0aec90f4e608064caf4ab395e7a0539e03315035f3",
+    "block": 45378075,
+    "deployer": "0x671542Cd062a5de9194817659e46FE02A64eE392",
+    "method": "create",
+    "initCodeHash": "0x2d67414956f2e58762a1b7d6743712b99e3d4f4968b00b414f8d20cbfddee9ce",
+    "runtimeCodeHash": "0x2db255f0a0bce2d1024c441b86549634445c7215066a3d2ccae2ed2a4781c38d",
+    "compiler": {
+      "solc": "0.8.29+commit.ab55807c",
+      "evmVersion": "prague",
+      "optimizer": true,
+      "optimizerRuns": 1000,
+      "viaIr": false,
+      "bytecodeHash": "ipfs",
+      "foundryProfile": "default"
+    },
+    "source": {
+      "submodule": "contracts/src",
+      "repository": "https://github.com/Whisker17/mantle-7702-sdk",
+      "tag": null,
+      "commit": "b4029c00ac241c0e4a1a91610b00d65ef920750e",
+      "contract": "src/mocks/MockUSD.sol:MockUSD"
+    }
+  },
+  "MockLaunchpad": {
+    "address": "0x63614eAb4365EcA8c674D649fF2d3beb1a1cC7E9",
+    "deployTx": "0x00bc789e30fb40629a2d9c28436c26c429cf15c835aac4fa6c5d2d92334b8e14",
+    "block": 45378077,
+    "deployer": "0x671542Cd062a5de9194817659e46FE02A64eE392",
+    "method": "create",
+    "initCodeHash": "0xb29402e111d4a768f80d5e3aa35e2c4fcd491f70563acbd9933b4d38e281c5ad",
+    "runtimeCodeHash": "0x2ca4d0e2a9625422dad703d20c74f07cd5bcc9e71f54847367f7b547dddc34a4",
+    "compiler": {
+      "solc": "0.8.29+commit.ab55807c",
+      "evmVersion": "prague",
+      "optimizer": true,
+      "optimizerRuns": 1000,
+      "viaIr": false,
+      "bytecodeHash": "ipfs",
+      "foundryProfile": "default"
+    },
+    "source": {
+      "submodule": "contracts/src",
+      "repository": "https://github.com/Whisker17/mantle-7702-sdk",
+      "tag": null,
+      "commit": "b4029c00ac241c0e4a1a91610b00d65ef920750e",
+      "contract": "src/mocks/MockLaunchpad.sol:MockLaunchpad"
+    },
+    "quoteToken": "0xDA74D3F269F4aF7a3a5eFFf81Bf64384De327526"
+  },
+  "MemeToken": {
+    "address": "0xAb2D3B4cD4770e2669fe2BA781D449A214EF958f",
+    "deployTx": "0xb3ac2475c5656efa61f73694c07f5ac98aad2e608a48f55ebdc9c0fe0be38995",
+    "block": 45378079,
+    "deployer": "0x671542Cd062a5de9194817659e46FE02A64eE392",
+    "method": "create",
+    "initCodeHash": "0x4b2db3f3f13b52a1bb544654fc27fc272bd2c9befb791ac199f35370b4613a43",
+    "runtimeCodeHash": "0x044ec502301042607472028cf0625cb1d1f8ee30415f0dfbcc8789da3881d18e",
+    "compiler": {
+      "solc": "0.8.29+commit.ab55807c",
+      "evmVersion": "prague",
+      "optimizer": true,
+      "optimizerRuns": 1000,
+      "viaIr": false,
+      "bytecodeHash": "ipfs",
+      "foundryProfile": "default"
+    },
+    "source": {
+      "submodule": "contracts/src",
+      "repository": "https://github.com/Whisker17/mantle-7702-sdk",
+      "tag": null,
+      "commit": "b4029c00ac241c0e4a1a91610b00d65ef920750e",
+      "contract": "src/mocks/MemeToken.sol:MemeToken"
+    },
+    "launchpad": "0x63614eAb4365EcA8c674D649fF2d3beb1a1cC7E9",
+    "name": "Agent Meme",
+    "symbol": "AMEME",
+    "sourceNote": "Created by MockLaunchpad.createToken(name, symbol) in deployTx (sent by deployer); the CREATE is from the launchpad, so initCodeHash = keccak256(creationCode ++ abi.encode(name, symbol))."
   }
 }
