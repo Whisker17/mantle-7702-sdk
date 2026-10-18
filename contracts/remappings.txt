@@ -1,0 +1,9 @@
+forge-std/=lib/forge-std/src/
+account-abstraction/=lib/account-abstraction/contracts/
+calibur/=lib/calibur/src/
+lib/calibur/:account-abstraction/=lib/calibur/lib/account-abstraction/contracts/
+@openzeppelin/contracts/=lib/calibur/lib/openzeppelin-contracts/contracts/
+solady/=lib/calibur/lib/solady/src/
+webauthn-sol/=lib/calibur/lib/webauthn-sol/
+FreshCryptoLib/=lib/calibur/lib/webauthn-sol/lib/FreshCryptoLib/solidity/src/
+openzeppelin-contracts/=lib/calibur/lib/openzeppelin-contracts/
