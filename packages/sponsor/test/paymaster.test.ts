@@ -126,6 +126,8 @@ class FakeChain {
   /** Every `eth_getLogs` span requested. */
   ranges: [bigint, bigint][] = [];
   failLogs = false;
+  /** Holds the next `eth_getLogs` (its span already fixed) until it resolves. */
+  logsGate: Promise<void> | undefined;
   simulationReverts = false;
   readonly client = createClient({
     chain: mantleSepolia,
@@ -155,6 +157,9 @@ class FakeChain {
           baseFeePerGas: toHex(parseGwei("50")),
         };
       case "eth_getLogs": {
+        const gate = this.logsGate;
+        this.logsGate = undefined;
+        await gate;
         if (this.failLogs) throw Object.assign(new Error("upstream unavailable"), { code: -32000 });
         const [{ fromBlock, toBlock, topics }] = params as [
           { fromBlock: Hex; toBlock: Hex; topics: Hex[] },
@@ -595,6 +600,103 @@ describe("paymaster sponsorship and its reservation", () => {
       expect(ledger.find(entry.digest)).toEqual(result);
     },
   );
+
+  /** Sponsors a first UserOp and puts its UserOperationEvent in the next block. */
+  const sponsorIncluded = async () => {
+    await sponsor(await request({ now: clock }));
+    const event = { block: chain.head.number + 1n, success: true, cost: 4_321n, used: 1_234n };
+    chain.events.set(only().paymaster?.userOpHash as Hex, event);
+    chain.advance(2n, 4);
+    return only().digest;
+  };
+  const next = (method: PaymasterMethod) =>
+    request({ method, now: clock, op: userOp({ nonce: 1n }) });
+
+  it.each([PM_GET_PAYMASTER_DATA_METHOD, PM_GET_PAYMASTER_STUB_DATA_METHOD] as const)(
+    "accepts the next request right after the previous UserOp's inclusion, before the loop runs, settling it with its actualGasCost (%s)",
+    async (method) => {
+      const first = await sponsorIncluded();
+      // The loop polls every minute: only the request itself can have settled the first entry.
+      const result = await sponsorUserOp(ctx, method, await next(method));
+      expect(result).toMatchObject({ paymaster: book.verifyingPaymaster });
+      expect(store.entry(first)).toMatchObject({
+        state: "settled",
+        reserved: { gas: 0n, fee: 0n },
+        charged: { gas: 1_234n, fee: 4_321n },
+        paymaster: { included: { success: true, actualGasCost: "4321", actualGasUsed: "1234" } },
+      });
+      const open = store.entries(["submitted"]);
+      expect(open).toHaveLength(method === PM_GET_PAYMASTER_DATA_METHOD ? 1 : 0);
+      expect(usage()).toEqual(
+        method === PM_GET_PAYMASTER_DATA_METHOD
+          ? { gas: 1_234n + reserved().gas, fee: 4_321n + reserved().fee }
+          : { gas: 1_234n, fee: 4_321n },
+      );
+    },
+  );
+
+  it.each([PM_GET_PAYMASTER_DATA_METHOD, PM_GET_PAYMASTER_STUB_DATA_METHOD] as const)(
+    "still refuses SPONSOR_BUSY while the previous sponsorship is unincluded and valid, or its logs cannot be read (%s)",
+    async (method) => {
+      await sponsor(await request({ now: clock }));
+      const { digest, paymaster } = only();
+      chain.advance(5n, 10);
+      expect(await rejection(method, await next(method))).toBe(SponsorRejectCode.SPONSOR_BUSY);
+      // The request searched the chain up to its head and found nothing.
+      expect(store.entry(digest)?.paymaster?.scannedTo).toBe(Number(chain.head.number));
+
+      chain.events.set(paymaster?.userOpHash as Hex, {
+        block: chain.head.number + 1n,
+        success: true,
+        cost: 1n,
+        used: 1n,
+      });
+      chain.advance(1n, 2);
+      chain.failLogs = true;
+      expect(await rejection(method, await next(method))).toBe(SponsorRejectCode.SPONSOR_BUSY);
+      expect(only()).toMatchObject({ state: "submitted", reserved: reserved() });
+      expect(usage()).toEqual(reserved());
+    },
+  );
+
+  it("a request racing the loop settles the previous sponsorship exactly once", async () => {
+    const first = await sponsorIncluded();
+    const method = PM_GET_PAYMASTER_DATA_METHOD;
+    await Promise.all([ledger.reconcile(), sponsor(await next(method)), ledger.reconcile()]);
+    expect(store.entry(first)).toMatchObject({
+      state: "settled",
+      charged: { gas: 1_234n, fee: 4_321n },
+    });
+    expect(store.entries(["submitted"])).toHaveLength(1);
+    expect(usage()).toEqual({ gas: 1_234n + reserved().gas, fee: 4_321n + reserved().fee });
+  });
+
+  it("a pass that searched too few blocks never rewrites an entry another pass settled", async () => {
+    await sponsor(await request({ now: clock }));
+    const { digest, paymaster } = only();
+    chain.advance(1n, 2);
+    let open: () => void = () => undefined;
+    chain.logsGate = new Promise((resolve) => {
+      open = resolve;
+    });
+    // The slow pass's span ends before the UserOp's block; a faster pass then finds and settles it.
+    const slow = ledger.reconcile();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    chain.events.set(paymaster?.userOpHash as Hex, {
+      block: chain.head.number + 1n,
+      success: true,
+      cost: 9n,
+      used: 8n,
+    });
+    chain.advance(1n, 2);
+    await ledger.reconcile();
+    const settled = store.entry(digest);
+    expect(settled?.state).toBe("settled");
+    open();
+    await slow;
+    expect(store.entry(digest)).toEqual(settled);
+    expect(usage()).toEqual({ gas: 8n, fee: 9n });
+  });
 
   it("releases a never-included sponsorship only once a block past validUntil has been searched", async () => {
     const validUntil = clock + 60;

@@ -1,7 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import {
   AgentSession,
   BundlerExecutor,
@@ -88,7 +87,9 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
       database: join(dir, "sponsor.sqlite"),
       paymasterSignerKeyEnv: SIGNER_ENV,
     };
-    sponsor = await startSponsor(config, { pollIntervalMs: 200 });
+    // The reconcile loop never runs during the test: a sponsorship settles only when the account's
+    // next request finds its UserOp included, as a client asking right after the bundler does.
+    sponsor = await startSponsor(config, { pollIntervalMs: 3_600_000 });
     store = new SponsorStore(config.database);
     // No sponsor address given: the executor reads it from the sponsor's /health.
     executor = new BundlerExecutor({
@@ -130,15 +131,7 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
     );
     return args;
   };
-  /** The sponsor settles a sponsorship once it sees the op's event; until then the account is busy. */
-  const sponsorSettled = async () => {
-    const deadline = Date.now() + 20_000;
-    while (store.entries(["submitted"]).length > 0) {
-      if (Date.now() > deadline) throw new Error("sponsorship still open");
-      await sleep(200);
-    }
-    return store.entries();
-  };
+  let initCost: bigint;
 
   it("initialises an undelegated account (root init UserOp with eip7702Auth, first grant) through the bundler", async () => {
     expect(await account.state()).toBe("UNDELEGATED");
@@ -149,12 +142,9 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
     const tx = await stack.client.getTransaction({ hash });
     expect(tx.type).toBe("eip7702");
     expect(tx.to?.toLowerCase()).toBe(book.entryPoint.toLowerCase());
-    expect(await userOpEvent(hash)).toMatchObject({
-      sender: root.address,
-      paymaster: PM,
-      success: true,
-      nonce: 0n,
-    });
+    const event = await userOpEvent(hash);
+    expect(event).toMatchObject({ sender: root.address, paymaster: PM, success: true, nonce: 0n });
+    initCost = event.actualGasCost;
     // Accepted through safe-mode validation: Alto traced it with its ERC-7562 collector.
     expect(stack.bundler.logs()).toContain("tracerResult");
     expect((await stack.client.getCode({ address: root.address }))?.toLowerCase()).toBe(
@@ -175,14 +165,14 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
       hooked: true,
       summary: { active: true },
     });
-    // The paymaster paid: the root holds no MNT, and the sponsor charged the management budget.
+    // The paymaster paid: the root holds no MNT. The sponsorship stays open until the next request.
     expect(await stack.client.getBalance({ address: root.address })).toBe(0n);
-    expect(await sponsorSettled()).toMatchObject([
-      { state: "settled", budgetClass: "management", account: root.address },
+    expect(store.entries()).toMatchObject([
+      { state: "submitted", budgetClass: "management", account: root.address },
     ]);
   }, 180_000);
 
-  it("runs an agent exec as a session UserOp on the key's own lane through the bundler", async () => {
+  it("runs an agent exec right after the init, as a session UserOp on the key's own lane through the bundler", async () => {
     const keyHash = getProfile("agent", keystore).keyHash;
     const agent = new AgentSession({
       client: stack.client,
@@ -213,8 +203,16 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
         args: [root.address, PAD],
       }),
     ).toBe(123n);
-    const entries = await sponsorSettled();
-    expect(entries).toHaveLength(2);
-    expect(entries.filter((e) => e.state === "settled")).toHaveLength(2);
+    // Asking for this op settled the init's sponsorship with what the EntryPoint charged.
+    expect(store.entries()).toMatchObject([
+      {
+        state: "settled",
+        budgetClass: "management",
+        reserved: { gas: 0n, fee: 0n },
+        charged: { fee: initCost },
+        paymaster: { included: { success: true, actualGasCost: String(initCost) } },
+      },
+      { state: "submitted", budgetClass: "business" },
+    ]);
   }, 120_000);
 });
