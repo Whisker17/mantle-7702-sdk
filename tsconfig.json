@@ -2,12 +2,17 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@mantle-aa/sdk": ["./packages/sdk/src/index.ts"],
+      "@mantle-aa/sponsor": ["./packages/sponsor/src/index.ts"]
+    }
   },
   "include": [
     "test/**/*.ts",
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
+    "e2e/**/*.ts",
     "vitest.config.ts"
   ]
 }
