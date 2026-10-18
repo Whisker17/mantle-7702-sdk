@@ -1,0 +1,18 @@
+[profile.default]
+src = "src"
+script = "script"
+test = "test"
+out = "out"
+libs = ["lib"]
+auto_detect_remappings = false
+solc_version = "0.8.29"
+# EIP-7702 (set-code transactions) needs the Prague hardfork.
+evm_version = "prague"
+optimizer = true
+optimizer_runs = 1000
+# Calibur's ERC7739 only compiles with via-ir (mirrors lib/calibur/foundry.toml).
+additional_compiler_profiles = [{ name = "via_ir", via_ir = true, optimizer_runs = 1000 }]
+compilation_restrictions = [{ paths = "lib/calibur/src/ERC7739.sol", via_ir = true }]
+
+[fmt]
+line_length = 100
