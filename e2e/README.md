@@ -24,8 +24,8 @@ embedded mode (`MANTLE_AA_EMBEDDED_RELAYER=1`, no service). Each run has its own
   signature by the session key (on chain only: no CLI or sponsor path signs one), an expired key,
   a deadline out of range, `recipient ≠ self`; after `session revoke`, old and new signatures, the
   re-grant of the same key and a Calibur-only re-registration of it.
-- Not covered here: a wrong paymaster (bundler path), the MNT value case, panic and the
-  entry-point matrix (later suites and the contract tests).
+- Not covered here: a wrong paymaster (bundler path, `bundler/path.test.ts`), the MNT value
+  case, panic and the entry-point matrix (later suites and the contract tests).
 
 ```bash
 MANTLE_SEPOLIA_RPC_URL=https://rpc.sepolia.mantle.xyz pnpm exec vitest run e2e
@@ -47,6 +47,46 @@ with `alto/safe-validator.patch`. Alto's whole dependency tree is pinned by
   the signer key), signs, sends and awaits one UserOp for a Calibur account.
 - `bundler.test.ts`: the smoke suite. A fresh EOA's root init UserOp with `eip7702Auth`,
   sponsored by the deployed paymaster, lands as a type-4 bundle.
+- `path.test.ts`: §8 steps 1–6 through the bundler path (`--via bundler`), twice like the relayer
+  suite: (a) against `mantle-aa sponsor serve` with a paymaster signer key, (b) in embedded mode
+  (`MANTLE_AA_EMBEDDED_RELAYER=1` + `MANTLE_AA_PAYMASTER_SIGNER_KEY`). Each run starts its own fork
+  and Alto and swaps the deployed VerifyingPaymaster's signer for the sponsor's key, so the root's
+  init UserOp (2-byte `0x7702` initCode) and every session UserOp land through the deployed
+  paymaster code. Same fixture, policy and 0-MNT assertions as the relayer suite; the account's
+  EntryPoint deposit also stays 0. The fork mines a block every second (interval mining), as a live
+  chain does: on an automining fork Alto stalls. It releases its executor wallet only on a new block
+  that shows its bundle included, so on a quiet chain an `eth_sendUserOperation` can wait for that
+  wallet without bound (measured: 30 s while a bundle sat unmined, answered within 1 s of the next
+  block); and on a slow runner its bundle transaction, mined inside `eth_sendRawTransaction`,
+  outlasted its 10 s RPC bound three times, after which it re-validated the op endlessly without
+  dropping it (Alto 0.0.21) and the failures throttled the paymaster's reputation.
+  - Every overreach is refused three times: by `agent exec` (nothing reaches the bundler), by the
+    sponsor's paymaster service for a request built without the pre-check, and on chain: the test
+    signs the session UserOp with the session key, signs its paymaster data itself with the swapped
+    signer key (a paymaster that would sponsor anything), and a funded third-party EOA calls
+    `EntryPoint.handleOps`. The hook stops the op in execution (`UserOperationEvent` success false,
+    the hook's error in `UserOperationRevertReason`) and the account's balances, allowance, limits
+    and inventory are unchanged. Covered as in the relayer suite, plus: a sponsorship window that
+    has passed (`AA32`, on chain only: the SDK never asks with one and the sponsor's
+    `REQUEST_EXPIRED` is unit-tested), an expired key (`AA22`), and after revoke `AA24` (Calibur no
+    longer knows the key) or, once the key is re-registered on Calibur alone, `AA23 SessionInactive`
+    from the hook.
+  - I10: a session UserOp with no paymaster, or with another working, funded paymaster (a copy of
+    the deployed one), fails validation with `AA23 WrongPaymaster` from the hook's
+    `afterValidateUserOp`, even when the account could pay the prefund; strict Alto refuses it
+    too, and no balance or deposit changes. A root UserOp may use the other paymaster. The CLI and
+    the sponsor have no path to it: the sponsor only signs for its own paymaster, and the SDK
+    refuses a sponsor answer naming another.
+  - Cross-path replay: a session's SignedBatchedCall does not validate as a UserOp (`AA24`) and runs
+    once (`InvalidNonce`); a UserOp does not validate as a SignedBatchedCall (`InvalidSignature`)
+    and runs once (`AA25`). The two nonce systems are independent, so the same intent signed again
+    for the other path does run again: it is not idempotent across paths (`docs/DESIGN.md` §4.1).
+  - Cross-lane consumption, a known limitation: on chain nothing binds a nonce lane to the signing
+    key, so a session key's UserOp on another key's lane or on the root lane 0, and its
+    SignedBatchedCall on another key's Calibur lane, execute and advance that lane (a DoS of what
+    that key had signed; it still executes on the next sequence). The sponsor refuses such
+    requests on both paths (`WRONG_LANE`, `ROOT_LANE_MISUSE`); the CLI always signs on the key's
+    own lane.
 - `sepolia.sh`, `trace-proxy.mjs`, `land-sepolia.ts`: the same Alto against the real chain, with
   `debug_*` traced on a local anvil fork, and the script that landed the UserOp in
   `docs/infra.md` §10.3.
