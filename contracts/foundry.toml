@@ -14,5 +14,14 @@ optimizer_runs = 1000
 additional_compiler_profiles = [{ name = "via_ir", via_ir = true, optimizer_runs = 1000 }]
 compilation_restrictions = [{ paths = "lib/calibur/src/ERC7739.sol", via_ir = true }]
 
+# Reproduces the canonical CaliburEntry bytecode (lib/calibur/foundry.toml: cancun, no metadata
+# hash); used only by script/DeployCalibur.s.sol. Separate output so it never mixes with default.
+[profile.calibur]
+evm_version = "cancun"
+bytecode_hash = "none"
+out = "out/calibur"
+cache_path = "cache/calibur"
+fs_permissions = [{ access = "read", path = "../deployments" }]
+
 [fmt]
 line_length = 100
