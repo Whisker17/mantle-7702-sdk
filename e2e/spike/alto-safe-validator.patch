@@ -1,0 +1,47 @@
+--- a/esm/rpc/validation/SafeValidator.js
++++ b/esm/rpc/validation/SafeValidator.js
+@@ -1,6 +1,6 @@
+ import { CodeHashGetterAbi, CodeHashGetterBytecode, ERC7769Errors, EntryPointV06Abi, RpcError, pimlicoSimulationsAbi } from "../../types/index.js";
+ import { getAddressFromInitCodeOrPaymasterAndData, getAuthorizationStateOverrides, getEntryPointSimulationsAddress, getViemEntryPointVersion, jsonStringifyWithBigint, toPackedUserOp } from "../../utils/index.js";
+-import { decodeErrorResult, encodeDeployData, encodeFunctionData, zeroAddress } from "viem";
++import { decodeErrorResult, decodeFunctionResult, encodeDeployData, encodeFunctionData, zeroAddress } from "viem";
+ import { bundlerCollectorTracer } from "./BundlerCollectorTracerV07.js";
+ import { tracerResultParserV06 } from "./TracerResultParserV06.js";
+ import { tracerResultParserV07 } from "./TracerResultParserV07.js";
+@@ -267,11 +267,33 @@
+             throw new Error("Invalid response. simulateCall must revert");
+         }
+         const resultData = lastResult.data;
+-        // Decode the validation result from the revert data
+-        const { errorName, args } = decodeErrorResult({
+-            abi: pimlicoSimulationsAbi,
++        // SPIKE PATCH: the last traced exit is EntryPoint.delegateAndRevert's
++        // DelegateAndRevert(bool success, bytes ret); on success `ret` is the ABI-encoded
++        // ValidationResult that PimlicoSimulations.simulateValidation returns.
++        const delegated = decodeErrorResult({
++            abi: [{ type: "error", name: "DelegateAndRevert", inputs: [{ name: "success", type: "bool" }, { name: "ret", type: "bytes" }] }],
+             data: resultData
+         });
++        const [delegateOk, delegateRet] = delegated.args;
++        let errorName = "ValidationResult";
++        let args;
++        if (delegateOk) {
++            args = [decodeFunctionResult({ abi: pimlicoSimulationsAbi, functionName: "simulateValidation", data: delegateRet })];
++        } else {
++            // Inner revert of EntryPointSimulations (FailedOp / FailedOpWithRevert carry "AAxx").
++            try {
++                const inner = decodeErrorResult({
++                    abi: [
++                        { type: "error", name: "FailedOp", inputs: [{ name: "opIndex", type: "uint256" }, { name: "reason", type: "string" }] },
++                        { type: "error", name: "FailedOpWithRevert", inputs: [{ name: "opIndex", type: "uint256" }, { name: "reason", type: "string" }, { name: "inner", type: "bytes" }] }
++                    ],
++                    data: delegateRet
++                });
++                errorName = inner.args.slice(1).join(" ");
++            } catch {
++                errorName = `validation reverted: ${delegateRet}`;
++            }
++        }
+         if (errorName !== "ValidationResult") {
+             let errorCode = ERC7769Errors.SimulateValidation;
+             const errorMessage = errorName || "Unknown validation error";
