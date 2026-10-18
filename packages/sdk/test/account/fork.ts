@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   type Chain,
   createPublicClient,
@@ -25,21 +25,46 @@ const ANVIL_MNEMONIC = "test test test test test test test test test test test j
 export const RELAYER = mnemonicToAccount(ANVIL_MNEMONIC, { addressIndex: 1 });
 export const THIRD_PARTY = mnemonicToAccount(ANVIL_MNEMONIC, { addressIndex: 2 });
 
-/** Starts anvil forking Mantle Sepolia (Prague, so EIP-7702 applies) and returns its URL. */
-export async function startFork(rpcUrl: string): Promise<{ url: string; stop: () => void }> {
-  const port = 20000 + Math.floor(Math.random() * 20000);
-  const anvil: ChildProcess = spawn("anvil", [
-    "--fork-url",
-    rpcUrl,
-    "--port",
-    String(port),
-    "--hardfork",
-    "prague",
-  ]);
-  await new Promise<void>((resolve, reject) => {
-    anvil.once("error", reject);
-    anvil.once("exit", (code) => reject(new Error(`anvil exited with ${code}`)));
-    anvil.stdout?.on("data", (data) => String(data).includes("Listening on") && resolve());
+/**
+ * Starts anvil forking Mantle Sepolia (Prague, so EIP-7702 applies) and returns its URL. anvil
+ * binds a port the OS picks (`--port 0`) and reports it; a start that fails or does not listen
+ * within `timeoutMs` rejects with the tail of anvil's output, URLs redacted.
+ */
+export async function startFork(
+  rpcUrl: string,
+  timeoutMs = 30_000,
+): Promise<{ url: string; stop: () => void }> {
+  const anvil = spawn("anvil", ["--fork-url", rpcUrl, "--port", "0", "--hardfork", "prague"]);
+  let output = "";
+  let listening = false;
+  const port = await new Promise<string>((resolve, reject) => {
+    const fail = (why: string) => {
+      clearTimeout(timer);
+      anvil.kill();
+      const tail = output
+        .replace(/\w+:\/\/[^\s)]+/g, "<url>")
+        .slice(-1_000)
+        .trim();
+      reject(new Error(`anvil ${why}: ${tail || "(no output)"}`));
+    };
+    const timer = setTimeout(() => fail(`did not listen within ${timeoutMs} ms`), timeoutMs);
+    anvil.once("error", (e) => fail(e.message));
+    // "close", not "exit": it fires after the pipes are drained, so the error text is in `output`.
+    anvil.once("close", (code, signal) => fail(`exited with ${code ?? signal}`));
+    // Keeps draining both pipes after the start so anvil never blocks on a full one.
+    const keep = (data: Buffer) => {
+      if (listening) return;
+      output += data;
+      const port = /Listening on [\d.]+:(\d+)/.exec(output)?.[1];
+      if (port) {
+        listening = true;
+        clearTimeout(timer);
+        anvil.removeAllListeners("close");
+        resolve(port);
+      }
+    };
+    anvil.stdout.on("data", keep);
+    anvil.stderr.on("data", keep);
   });
   return { url: `http://127.0.0.1:${port}`, stop: () => anvil.kill() };
 }
