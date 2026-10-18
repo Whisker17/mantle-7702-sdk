@@ -168,8 +168,9 @@ contract AgentPolicyHookCaliburTest is AgentPolicyHookTestBase {
 
     function _userOp(address paymaster) internal view returns (PackedUserOperation memory op) {
         op.sender = root;
+        // Calibur decodes `callData[4:]` as a BatchedCall: selector ‖ abi.encode(BatchedCall).
         op.callData = abi.encodeWithSelector(
-            IAccountExecute.executeUserOp.selector, abi.encode(BatchedCall(_one(bob, ""), true))
+            IAccountExecute.executeUserOp.selector, BatchedCall(_one(bob, ""), true)
         );
         op.paymasterAndData = abi.encodePacked(paymaster, uint128(100_000), uint128(50_000));
         bytes32 userOpHash = keccak256("userOpHash");
