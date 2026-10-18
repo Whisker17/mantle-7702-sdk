@@ -186,14 +186,31 @@ function revertData(error: unknown): Hex {
   return data;
 }
 
-/** Alto's last 150 log entries, each cut to 300 characters, without its head polling. */
-const altoLog = (log: string) =>
-  log
-    .split(/\n(?=\[\d\d:\d\d:\d\d\.\d{3}\])/)
-    .filter((entry) => !/"eth_(getBlockByNumber|blockNumber)"/.test(entry))
-    .slice(-150)
-    .map((entry) => entry.slice(0, 300))
-    .join("\n");
+/** `HH:MM:SS.mmm` in local time, as Alto's log stamps its entries. */
+const clock = (ms: number) =>
+  `${new Date(ms).toTimeString().slice(0, 8)}.${String(ms % 1000).padStart(3, "0")}`;
+
+/**
+ * Alto's log entries since `since`, without its head polling, each distinct entry once (at its
+ * first time, with how often it recurred); a long one keeps its start and its end (a trace ends
+ * with the revert that carries the reason).
+ */
+function altoLog(log: string, since: number): string {
+  const from = clock(since);
+  const seen = new Map<string, { text: string; count: number }>();
+  for (const entry of log.split(/\n(?=\[\d\d:\d\d:\d\d\.\d{3}\])/)) {
+    if (entry.slice(1, 13) < from || /"eth_(getBlockByNumber|blockNumber)"/.test(entry)) continue;
+    const text = entry.length > 1_200 ? `${entry.slice(0, 300)} … ${entry.slice(-900)}` : entry;
+    const key = text.slice(15);
+    const known = seen.get(key);
+    if (known) known.count++;
+    else seen.set(key, { text, count: 1 });
+  }
+  return [...seen.values()]
+    .map(({ text, count }) => (count > 1 ? `${text}\n  (×${count})` : text))
+    .join("\n")
+    .slice(0, 60_000);
+}
 
 /** Polls `check` every 200 ms until it holds; fails after `ms`. */
 async function until(check: () => boolean, ms: number, what: string) {
@@ -319,6 +336,7 @@ function bundlerRun(mode: Mode) {
 
   /** Runs a CLI step (submitting through the bundler), checks its exit code and that it leaks nothing. */
   async function s(args: string[], code: number): Promise<CliResult> {
+    const started = Date.now();
     const result = await cli(args[0] === "keys" ? args : [...args, "--via", "bundler"], env);
     const output = result.stdout + result.stderr;
     expect(output).not.toMatch(/127\.0\.0\.1/);
@@ -327,7 +345,7 @@ function bundlerRun(mode: Mode) {
     }
     // On a mismatch, Alto's recent log (without its block polling) shows what it did with the op.
     const alto = () =>
-      result.code === code ? "" : `\n--- alto ---\n${altoLog(stack.bundler.logs())}`;
+      result.code === code ? "" : `\n--- alto ---\n${altoLog(stack.bundler.logs(), started)}`;
     expect(result.code, `${args.join(" ")}: ${result.stdout}${alto()}`).toBe(code);
     expect(result.json.ok).toBe(code === 0);
     return result;
@@ -559,6 +577,7 @@ function bundlerRun(mode: Mode) {
     // took up to 41 s of the SDK's 60 s sponsorship window, and Alto drops an op whose window has
     // passed at its pre-bundle re-check (AA32), leaving the client to wait for a receipt.
     const warm = privateKeyToAccount(generatePrivateKey());
+    const warming = Date.now();
     const warmed = await sendSponsoredUserOp({
       client,
       bundlerUrl: stack.bundler.url,
@@ -573,7 +592,7 @@ function bundlerRun(mode: Mode) {
       paymaster: PAYMASTER,
       paymasterSigner,
       sendAttempts: 3,
-      logs: () => altoLog(stack.bundler.logs()),
+      logs: () => altoLog(stack.bundler.logs(), warming),
     });
     expect(warmed.success).toBe(true);
     env.MANTLE_AA_RPC_URL = stack.rpcUrl;
