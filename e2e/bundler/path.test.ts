@@ -579,8 +579,8 @@ function bundlerRun(mode: Mode) {
     await setPaymasterSigner(client, PAYMASTER, paymasterSigner.address);
     // Warm the fresh fork and Alto with a throwaway root init UserOp, as the smoke test lands one.
     // The first UserOp on a fork fetches its state from the upstream RPC: on a slow runner that
-    // took up to 41 s of the SDK's 60 s sponsorship window, and Alto drops an op whose window has
-    // passed at its pre-bundle re-check (AA32), leaving the client to wait for a receipt.
+    // took up to 41 s of the SDK's 60 s sponsorship window, and Alto's pre-bundle re-check refuses
+    // an op whose window is about to pass (and then retries it endlessly).
     const warm = privateKeyToAccount(generatePrivateKey());
     const warming = Date.now();
     const warmed = await sendSponsoredUserOp({
@@ -1075,13 +1075,17 @@ function bundlerRun(mode: Mode) {
       );
     });
 
-    it("left the session's limits and inventory untouched", async () => {
-      expect(await read("remainingLimit", USD)).toBe(usd(40));
-      expect(await read("inventory", MEME)).toBe(5n * UNIT);
-      expect(await balanceOf(USD)).toBe(usd(195));
-      expect(await balanceOf(MEME)).toBe(HUMAN_MEME + 5n * UNIT);
-      expect(await allowance()).toBe(0n);
-    });
+    it(
+      "left the session's limits and inventory untouched",
+      async () => {
+        expect(await read("remainingLimit", USD)).toBe(usd(40));
+        expect(await read("inventory", MEME)).toBe(5n * UNIT);
+        expect(await balanceOf(USD)).toBe(usd(195));
+        expect(await balanceOf(MEME)).toBe(HUMAN_MEME + 5n * UNIT);
+        expect(await allowance()).toBe(0n);
+      },
+      STEP_MS,
+    );
   });
 
   describe("cross-path replay: a signed batch runs once, and only on the path it was signed for", () => {
@@ -1363,10 +1367,14 @@ function bundlerRun(mode: Mode) {
     STEP_MS,
   );
 
-  it("the human and the agents held 0 MNT throughout, and the account no EntryPoint deposit", async () => {
-    await zeroMnt([account, trader.address, other.address]);
-    expect(await deposit(account)).toBe(0n);
-  });
+  it(
+    "the human and the agents held 0 MNT throughout, and the account no EntryPoint deposit",
+    async () => {
+      await zeroMnt([account, trader.address, other.address]);
+      expect(await deposit(account)).toBe(0n);
+    },
+    STEP_MS,
+  );
 }
 
 describe.skipIf(!rpcUrl)(
