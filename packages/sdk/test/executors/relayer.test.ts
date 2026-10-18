@@ -8,7 +8,7 @@ import {
   type Hex,
   type SignedAuthorization,
 } from "viem";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decodeExecute,
   type ExecRequest,
@@ -56,8 +56,15 @@ const execRequest = (over: Partial<ExecRequest> = {}): ExecRequest => ({
 
 type Reply = { result: RelayResult } | { error: object } | { status: number } | "hang";
 
-/** A stub sponsor: answers each `sponsor_relay` with the next scripted reply (the last repeats). */
-async function stubSponsor(replies: Reply[], health: object = { chainId: 5003, sponsor: RELAYER }) {
+/**
+ * A stub sponsor: answers each `sponsor_relay` with the next scripted reply (the last repeats),
+ * calling `onRelay` as each one arrives.
+ */
+async function stubSponsor(
+  replies: Reply[],
+  health: object = { chainId: 5003, sponsor: RELAYER },
+  onRelay = () => {},
+) {
   const bodies: string[] = [];
   let healthCalls = 0;
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -70,6 +77,7 @@ async function stubSponsor(replies: Reply[], health: object = { chainId: 5003, s
     let body = "";
     for await (const chunk of req) body += chunk;
     bodies.push(body);
+    onRelay();
     const reply = replies[Math.min(bodies.length, replies.length) - 1] as Reply;
     if (reply === "hang") return;
     if ("status" in reply) return send(reply.status, {});
@@ -87,6 +95,7 @@ async function stubSponsor(replies: Reply[], health: object = { chainId: 5003, s
 }
 const servers: ReturnType<typeof createServer>[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const s of servers.splice(0)) {
     s.close();
     s.closeAllConnections();
@@ -227,18 +236,30 @@ describe("RelayerExecutor", () => {
     await expect(executor(noHash.url).submit(execRequest())).rejects.toThrow(/without a hash/);
   });
 
+  // Both bounds run on a virtual clock (`Date.now`), so set-up time and machine load cannot move
+  // the deadline: only the stub sponsor advances it, and only on a relay.
   it("bounds a request that stays pending, and a sponsor that never answers", async () => {
-    const pending = await stubSponsor([settled("pending")]);
-    await expect(executor(pending.url, { timeoutMs: 200 }).submit(execRequest())).rejects.toThrow(
-      /still pending after 200 ms \(transaction 0x/,
-    );
-    expect(pending.bodies.length).toBeGreaterThan(1);
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
 
+    // Each pending answer costs 25 s of a 60 s budget, so the third passes the deadline and the
+    // executor stops re-posting there. No post gets under 10 s of real abort time, so none aborts.
+    const pending = await stubSponsor([settled("pending")], undefined, () => {
+      now += 25_000;
+    });
+    await expect(
+      executor(pending.url, { timeoutMs: 60_000 }).submit(execRequest()),
+    ).rejects.toThrow(/still pending after 60000 ms \(transaction 0x/);
+    expect(pending.bodies).toHaveLength(3);
+    expect(new Set(pending.bodies).size).toBe(1);
+
+    // The clock stands still, so only the executor's 200 ms abort can end a request that hangs.
     const hang = await stubSponsor(["hang"]);
-    const started = Date.now();
+    const started = performance.now();
     await expect(executor(hang.url, { timeoutMs: 200 }).submit(execRequest())).rejects.toThrow(
       /did not answer within 200 ms/,
     );
-    expect(Date.now() - started).toBeLessThan(2000);
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(hang.bodies).toHaveLength(1);
   });
 });
