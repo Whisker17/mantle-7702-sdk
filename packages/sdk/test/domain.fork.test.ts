@@ -1,4 +1,3 @@
-import { type ChildProcess, spawn } from "node:child_process";
 import { createClient, createWalletClient, http, publicActions } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -11,6 +10,7 @@ import {
   PrivateKeySigner,
   readCaliburDomain,
 } from "../src/index.js";
+import { startFork } from "./account/fork.js";
 
 // Forks Mantle Sepolia with anvil; skipped when MANTLE_SEPOLIA_RPC_URL is unset.
 const rpcUrl = process.env.MANTLE_SEPOLIA_RPC_URL;
@@ -18,28 +18,13 @@ const rpcUrl = process.env.MANTLE_SEPOLIA_RPC_URL;
 const SPONSOR_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
 describe.skipIf(!rpcUrl)("Calibur domain on a Mantle Sepolia fork", () => {
-  const port = 20000 + Math.floor(Math.random() * 20000);
-  const url = `http://127.0.0.1:${port}`;
-  let anvil: ChildProcess;
+  let url: string;
+  let stop: () => void;
 
   beforeAll(async () => {
-    anvil = spawn("anvil", [
-      "--fork-url",
-      rpcUrl as string,
-      "--port",
-      String(port),
-      "--hardfork",
-      "prague",
-    ]);
-    await new Promise<void>((resolve, reject) => {
-      anvil.once("error", reject);
-      anvil.once("exit", (code) => reject(new Error(`anvil exited with ${code}`)));
-      anvil.stdout?.on("data", (data) => String(data).includes("Listening on") && resolve());
-    });
+    ({ url, stop } = await startFork(rpcUrl as string));
   }, 60_000);
-  afterAll(() => {
-    anvil?.kill();
-  });
+  afterAll(() => stop?.());
 
   it("offline domain equals eip712Domain() after delegation", async () => {
     const { caliburEntry } = loadDeployments();
