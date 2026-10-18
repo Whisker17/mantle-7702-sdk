@@ -67,7 +67,8 @@ export async function readCaliburNonce(
   return (lane << 64n) | seq;
 }
 
-const signedBatchedCallTypes = {
+/** EIP-712 types of Calibur's SignedBatchedCall, shared by the signer and the sponsor's check. */
+export const signedBatchedCallTypes = {
   SignedBatchedCall: [
     { name: "batchedCall", type: "BatchedCall" },
     { name: "nonce", type: "uint256" },

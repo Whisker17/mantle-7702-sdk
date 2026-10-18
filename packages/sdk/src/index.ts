@@ -8,3 +8,4 @@ export * from "./errors.js";
 export * from "./keystore.js";
 export * from "./session/index.js";
 export * from "./signer.js";
+export * from "./sponsor/index.js";

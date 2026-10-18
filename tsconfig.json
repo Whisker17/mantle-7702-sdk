@@ -2,7 +2,10 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@mantle-aa/sdk": ["./packages/sdk/src/index.ts"]
+    }
   },
   "include": [
     "test/**/*.ts",
