@@ -5,7 +5,7 @@
 #
 # Usage: e2e/spike/userop.sh session <tag> [no-auth|with-auth]   session UserOp (default no-auth)
 #        e2e/spike/userop.sh root-init                            root init UserOp + eip7702Auth
-# Env: MANTLE_SEPOLIA_RPC_URL, BUNDLER_URL (default http://127.0.0.1:4337), VERIFICATION_GAS_PCT
+# Env: MANTLE_SEPOLIA_RPC_URL, BUNDLER_URL (default http://127.0.0.1:4337, e2e/bundler/sepolia.sh), VERIFICATION_GAS_PCT
 #      (default 150, applied to the estimated verificationGasLimit), and the signer and
 #      address variables SpikeUserOp.s.sol reads (*_PRIVATE_KEY, SPIKE_*).
 set -euo pipefail

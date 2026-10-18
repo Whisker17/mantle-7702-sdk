@@ -1,0 +1,8 @@
+{
+  "name": "mantle-7702-sdk-alto",
+  "private": true,
+  "description": "Pinned Alto bundler for the e2e harness (installed with npm ci outside the pnpm workspace).",
+  "dependencies": {
+    "@pimlico/alto": "0.0.21"
+  }
+}
