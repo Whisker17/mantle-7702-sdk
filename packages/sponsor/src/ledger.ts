@@ -18,6 +18,7 @@ import {
   type Attempt,
   type BudgetClass,
   type LedgerEntry,
+  type LedgerState,
   OPEN_STATES,
   type SponsorStore,
 } from "./store.js";
@@ -58,8 +59,8 @@ export interface RelayerStatus {
   pending: number;
   /** The nonce the next submission takes: `max(pending, highest nonce signed + 1)`. */
   nextNonce: number;
-  /** Requests not settled yet, oldest first, with every transaction signed for them. */
-  open: (LedgerEntry & { attempts: AttemptStatus[] })[];
+  /** Relayer requests not settled yet, oldest first, with every transaction signed for them. */
+  open: (Omit<LedgerEntry, "paymaster"> & { attempts: AttemptStatus[] })[];
 }
 
 export interface ReplaceOptions {
@@ -159,7 +160,7 @@ export class Ledger {
       latest,
       pending,
       nextNonce: this.#nextNonce(pending),
-      open: this.#store.entries(OPEN_STATES).map((e) => ({
+      open: this.#relayed(OPEN_STATES).map(({ paymaster: _, ...e }) => ({
         ...e,
         attempts: this.#store.attempts(e.digest).map(({ raw, ...a }) => {
           const { maxFeePerGas = 0n, maxPriorityFeePerGas = 0n } = parseTransaction(raw);
@@ -207,7 +208,7 @@ export class Ledger {
 
   /** One pass over the submitted requests: settle the mined, re-send the lost, release the dropped. */
   async reconcile(): Promise<void> {
-    const open = this.#store.entries(["submitted"]);
+    const open = this.#relayed(["submitted"]);
     if (!open.length) return;
     const { latest, pending } = await relayerNonces(this.#client, this.relayer);
     for (const entry of open) {
@@ -238,6 +239,11 @@ export class Ledger {
   }
 
   // ---- internals ------------------------------------------------------------------------------
+
+  /** Relayer requests in these states: paymaster sponsorships settle in `PaymasterLedger`. */
+  #relayed(states: readonly LedgerState[]): LedgerEntry[] {
+    return this.#store.entries(states).filter((e) => !e.paymaster);
+  }
 
   async #run(): Promise<void> {
     for (;;) {
@@ -411,9 +417,9 @@ export class Ledger {
   }
 
   #pending(nonce?: number): LedgerEntry {
-    const open = this.#store
-      .entries(["submitted"])
-      .sort((a, b) => (a.nonce as number) - (b.nonce as number));
+    const open = this.#relayed(["submitted"]).sort(
+      (a, b) => (a.nonce as number) - (b.nonce as number),
+    );
     const entry = nonce === undefined ? open[0] : open.find((e) => e.nonce === nonce);
     if (!entry) {
       throw new Error(

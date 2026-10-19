@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
+  PM_GET_PAYMASTER_DATA_METHOD,
+  PM_GET_PAYMASTER_STUB_DATA_METHOD,
   parseRelayRequest,
   type RelayRequest,
   type RelayResult,
@@ -18,6 +20,7 @@ import {
   verifyOnChain,
 } from "./auth.js";
 import type { SponsorConfig } from "./config.js";
+import { type PaymasterIssuer, sponsorUserOp } from "./paymaster.js";
 import {
   checkAllowlist,
   checkBudget,
@@ -116,20 +119,31 @@ async function decide(
 export interface SponsorServerOptions extends SponsorContext {
   /** Pays for accepted requests; without one they are refused `SUBMISSION_UNAVAILABLE`. */
   ledger?: RelaySubmitter;
+  /** Signs accepted UserOps; without one the `pm_*` methods refuse `SUBMISSION_UNAVAILABLE`. */
+  paymaster?: PaymasterIssuer;
 }
 
 const MAX_BODY_BYTES = 1 << 20;
 
-/** The HTTP JSON-RPC server: `POST /` for `sponsor_relay`, `GET /health`. */
+/**
+ * The HTTP JSON-RPC server: `POST /` for `sponsor_relay`, `pm_getPaymasterStubData` and
+ * `pm_getPaymasterData` (ERC-7677), `GET /health`.
+ */
 export function createSponsorServer(options: SponsorServerOptions) {
   const { config } = options;
 
-  async function relay(params: unknown): Promise<unknown> {
-    if (!Array.isArray(params) || params.length !== 1) {
-      return reject(SponsorRejectCode.INVALID_PARAMS, "params must be [request]");
-    }
-    return sponsorRelay(options, params[0]);
-  }
+  const methods: Record<string, (params: unknown) => Promise<unknown>> = {
+    async [SPONSOR_RELAY_METHOD](params) {
+      if (!Array.isArray(params) || params.length !== 1) {
+        return reject(SponsorRejectCode.INVALID_PARAMS, "params must be [request]");
+      }
+      return sponsorRelay(options, params[0]);
+    },
+    [PM_GET_PAYMASTER_STUB_DATA_METHOD]: (params) =>
+      sponsorUserOp(options, PM_GET_PAYMASTER_STUB_DATA_METHOD, params),
+    [PM_GET_PAYMASTER_DATA_METHOD]: (params) =>
+      sponsorUserOp(options, PM_GET_PAYMASTER_DATA_METHOD, params),
+  };
 
   async function rpc(body: string): Promise<object> {
     let message: { id?: unknown; jsonrpc?: unknown; method?: unknown; params?: unknown };
@@ -142,11 +156,15 @@ export function createSponsorServer(options: SponsorServerOptions) {
       return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } };
     }
     const id = message.id ?? null;
-    if (message.method !== SPONSOR_RELAY_METHOD) {
+    const method =
+      typeof message.method === "string" && Object.hasOwn(methods, message.method)
+        ? methods[message.method]
+        : undefined;
+    if (!method) {
       return { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } };
     }
     try {
-      return { jsonrpc: "2.0", id, result: await relay(message.params) };
+      return { jsonrpc: "2.0", id, result: await method(message.params) };
     } catch (error) {
       if (error instanceof SponsorRejection) {
         return {

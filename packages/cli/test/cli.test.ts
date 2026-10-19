@@ -175,13 +175,15 @@ describe("chain commands before any chain access", () => {
     ).toMatchSnapshot();
   });
 
-  it("agent exec --via bundler: not available in this version", async () => {
+  it("--via: relayer or bundler, on every command", async () => {
     expect(
-      await snap(["agent", "exec", "--agent", "a", "--calls", calls, "--via", "bundler"]),
+      await snap(["agent", "exec", "--agent", "a", "--calls", calls, "--via", "x"]),
     ).toMatchSnapshot();
-    expect(
-      (await snap(["agent", "exec", "--agent", "a", "--calls", calls, "--via", "x"])).code,
-    ).toBe(1);
+    expect((await snap(["account", "init", "--via", "4337"])).code).toBe(1);
+    // A valid path changes nothing before the chain is reached.
+    expect(await snap(["account", "init", "--via", "bundler"])).toEqual(
+      await snap(["account", "init"]),
+    );
   });
 });
 

@@ -1,5 +1,21 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`chain commands before any chain access > --via: relayer or bundler, on every command 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "agent exec",
+    "error": {
+      "code": "USAGE",
+      "message": "--via must be relayer or bundler",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
 exports[`chain commands before any chain access > account exec: malformed calls and release tuples 1`] = `
 {
   "code": 1,
@@ -185,22 +201,6 @@ exports[`chain commands before any chain access > account status: two root profi
       "code": "USAGE",
       "message": "no root profile "nope"",
       "type": "UsageError",
-    },
-    "exitCode": 1,
-    "ok": false,
-  },
-}
-`;
-
-exports[`chain commands before any chain access > agent exec --via bundler: not available in this version 1`] = `
-{
-  "code": 1,
-  "json": {
-    "command": "agent exec",
-    "error": {
-      "code": "NOT_AVAILABLE",
-      "message": "agent exec --via bundler is not available in this version",
-      "type": "NotAvailableError",
     },
     "exitCode": 1,
     "ok": false,

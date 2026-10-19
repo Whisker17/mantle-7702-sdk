@@ -16,11 +16,23 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Two jobs from one definition, in parallel: "typescript" runs lint, typecheck, build and every
+  # test outside e2e/; "e2e" runs the end-to-end suites under e2e/. Each job's fork gate checks
+  # exactly its share of the tracked fork files, and the two shares partition them by path.
   typescript:
-    name: typescript
+    name: ${{ matrix.suite }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: typescript
+            timeout: 20
+          - suite: e2e
+            timeout: 30
     env:
+      SUITE: ${{ matrix.suite }}
       # Public, credential-free Mantle Sepolia endpoint for the anvil forks of the fork suites.
       MANTLE_SEPOLIA_RPC_URL: https://rpc.sepolia.mantle.xyz
     steps:
@@ -40,21 +52,27 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint
+        if: matrix.suite == 'typescript'
         run: pnpm lint
 
       - name: Typecheck
+        if: matrix.suite == 'typescript'
         run: pnpm typecheck
 
       - name: Build
+        if: matrix.suite == 'typescript'
         run: pnpm build
 
       - name: Test
-        run: pnpm test --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/vitest.json"
+        run: |
+          if [ "$SUITE" = e2e ]; then scope=(e2e/); else scope=(--exclude 'e2e/**'); fi
+          pnpm test "${scope[@]}" --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/vitest.json"
 
       # The fork suites skip themselves without MANTLE_SEPOLIA_RPC_URL, which would leave the
-      # Test step green while running none of them. Fail if a fork suite (a tracked
-      # *.fork.test.ts or e2e/**/*.test.ts, or a collected suite under e2e/) was not collected,
-      # skipped any test, or passed none.
+      # Test step green while running none of them. Fail if a fork suite of this job's share (the
+      # "e2e" job: e2e/**; "typescript": every other path) was not collected, skipped any test, or
+      # passed none. A fork suite is a tracked *.fork.test.ts or e2e/**/*.test.ts, or a collected
+      # suite under e2e/.
       - name: Fork suites ran
         run: |
           node - "$RUNNER_TEMP/vitest.json" <<'EOF'
@@ -69,7 +87,8 @@ jobs:
           })
             .split("\n")
             .filter(Boolean);
-          const files = [...new Set([...tracked, ...[...ran.keys()].filter(isFork)])].sort();
+          const mine = (f) => f.startsWith("e2e/") === (process.env.SUITE === "e2e");
+          const files = [...new Set([...tracked, ...[...ran.keys()].filter(isFork)])].filter(mine).sort();
           let failed = false;
           for (const f of files) {
             const tests = ran.get(f)?.assertionResults ?? [];
@@ -82,13 +101,16 @@ jobs:
               failed = true;
             }
           }
-          if (files.length === 0) console.log("No fork suites in this tree.");
+          if (files.length === 0) console.log(`No fork suites for the ${process.env.SUITE} job in this tree.`);
           process.exit(failed ? 1 : 0);
           EOF
 
-      - name: Stop anvil
+      # Hosted runners also reap orphans at job end; this stops anything a suite left behind.
+      - name: Stop anvil and Alto
         if: always()
-        run: pkill -x anvil || true
+        run: |
+          pkill -x anvil || true
+          pkill -f '@pimlico/alto|node_modules/\.bin/alto' || true
 
   contracts:
     name: contracts

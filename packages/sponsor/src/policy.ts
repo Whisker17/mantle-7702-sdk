@@ -31,7 +31,7 @@ const MANAGEMENT_HOOK = ["setPolicy", "updatePolicy", "revoke", "releaseInventor
 
 /** Which budget a batch draws on: session batches are always business. */
 export function classify(
-  batch: SignedBatchedCall,
+  batch: Pick<SignedBatchedCall, "keyHash" | "batchedCall">,
   account: Address,
   config: SponsorConfig,
 ): BudgetClass {
@@ -77,15 +77,7 @@ export async function simulate(
   config: SponsorConfig,
   tx: { to: Address; data: Hex; authorizationList?: SignedAuthorization[] },
 ): Promise<SponsoredTransaction> {
-  let estimate: bigint;
-  try {
-    estimate = await estimateGas(client, { account: config.relayer, ...tx });
-  } catch (error) {
-    return reject(
-      SponsorRejectCode.SIMULATION_FAILED,
-      error instanceof BaseError ? error.shortMessage : "eth_estimateGas failed",
-    );
-  }
+  const estimate = await estimateOrReject(client, { account: config.relayer, ...tx });
   const gas = estimate + (estimate * GAS_HEADROOM_PERCENT) / 100n;
   try {
     const { maxFeePerGas, maxPriorityFeePerGas } = await estimateFeesPerGas(client);
@@ -93,6 +85,21 @@ export async function simulate(
     return { ...priced, maxFee: await relayerFeeBound(client, config.chainId, priced) };
   } catch {
     return reject(SponsorRejectCode.FEE_UNBOUNDED, "the gas price oracle could not bound the fee");
+  }
+}
+
+/** `eth_estimateGas` of the call; a revert is refused `SIMULATION_FAILED`. */
+export async function estimateOrReject(
+  client: Client,
+  call: { account: Address; to: Address; data: Hex; authorizationList?: SignedAuthorization[] },
+): Promise<bigint> {
+  try {
+    return await estimateGas(client, call);
+  } catch (error) {
+    return reject(
+      SponsorRejectCode.SIMULATION_FAILED,
+      error instanceof BaseError ? error.shortMessage : "eth_estimateGas failed",
+    );
   }
 }
 
