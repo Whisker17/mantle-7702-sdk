@@ -25,7 +25,8 @@ embedded mode (`MANTLE_AA_EMBEDDED_RELAYER=1`, no service). Each run has its own
   a deadline out of range, `recipient ≠ self`; after `session revoke`, old and new signatures, the
   re-grant of the same key and a Calibur-only re-registration of it.
 - Not covered here: a wrong paymaster (bundler path, `bundler/path.test.ts`), the MNT value
-  case, panic and the entry-point matrix (later suites and the contract tests).
+  case (`sepolia.ts`), panic (`packages/cli/test/cli.panic.fork.test.ts`, and `sepolia.ts` on the
+  real chain) and the entry-point matrix (the contract tests).
 
 ```bash
 MANTLE_SEPOLIA_RPC_URL=https://rpc.sepolia.mantle.xyz pnpm exec vitest run e2e
