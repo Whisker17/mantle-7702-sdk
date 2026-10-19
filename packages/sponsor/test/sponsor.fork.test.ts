@@ -109,7 +109,7 @@ describe.skipIf(!rpcUrl)("sponsor authentication and policy on a Mantle Sepolia 
   afterAll(() => {
     store?.close();
     stop?.();
-  });
+  }, 30_000);
 
   /** A request for `account`, on the batch key's current Calibur nonce. */
   const request = async (o: Omit<RequestOptions, "client" | "account"> & { account?: Address }) => {

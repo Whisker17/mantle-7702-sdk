@@ -1,4 +1,4 @@
-import { getChain } from "@mantle-aa/sdk";
+import { getChain, redactUrls } from "@mantle-aa/sdk";
 import { createPublicClient, http } from "viem";
 import { loadConfig, type SponsorConfig } from "./config.js";
 import { Ledger } from "./ledger.js";
@@ -76,7 +76,12 @@ export async function startSponsor(config: SponsorConfig, options: StartSponsorO
     await ledger?.close();
     await paymaster?.close();
     store.close();
-    throw error;
+    // A viem error names the RPC URL, which may carry a credential, in its message, details and
+    // causes: only its redacted message goes on. The configured URL is replaced whole first, so a
+    // malformed one (which the generic redaction would cut short) leaves nothing behind.
+    const message = error instanceof Error ? error.message : String(error);
+    const scrubbed = config.rpcUrl ? message.replaceAll(config.rpcUrl, "<redacted-url>") : message;
+    throw new Error(redactUrls(scrubbed));
   }
 }
 
@@ -89,7 +94,10 @@ export async function main(argv: readonly string[]) {
 }
 
 if (import.meta.main) {
-  const sponsor = await main(process.argv.slice(2));
+  const sponsor = await main(process.argv.slice(2)).catch((error: unknown) => {
+    console.error(`sponsor: ${redactUrls(error instanceof Error ? error.message : String(error))}`);
+    process.exit(1);
+  });
   console.log(`sponsor listening on ${sponsor.url}`);
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => sponsor.close());
 }

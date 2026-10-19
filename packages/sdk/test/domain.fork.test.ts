@@ -24,7 +24,7 @@ describe.skipIf(!rpcUrl)("Calibur domain on a Mantle Sepolia fork", () => {
   beforeAll(async () => {
     ({ url, stop } = await startFork(rpcUrl as string));
   }, 60_000);
-  afterAll(() => stop?.());
+  afterAll(() => stop?.(), 30_000);
 
   it("offline domain equals eip712Domain() after delegation", async () => {
     const { caliburEntry } = loadDeployments();

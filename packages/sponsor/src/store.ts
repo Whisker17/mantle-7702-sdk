@@ -1,3 +1,4 @@
+import { realpathSync, statSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import type { PaymasterDataResult, RelayResult, SponsorRejectCode } from "@mantle-aa/sdk";
 import type { Address, Hex } from "viem";
@@ -119,6 +120,12 @@ const zero = (): Record<BudgetClass, Usage> => ({
 });
 
 /**
+ * The submitting claims of this process, held until their store closes: the garbage collector
+ * closes an unreachable `DatabaseSync`, which would drop a claim its store never released.
+ */
+const claims = new Set<DatabaseSync>();
+
+/**
  * Persisted daily counters (SQLite, `node:sqlite`): per account and globally, per budget class;
  * they hold what is charged plus what is still reserved. Beside them, the ledger of paid requests
  * and every relayer transaction signed for them. Amounts are decimal TEXT because wei sums overflow
@@ -126,8 +133,12 @@ const zero = (): Record<BudgetClass, Usage> => ({
  */
 export class SponsorStore {
   readonly #db: DatabaseSync;
+  readonly #path: string;
+  /** Held while this store is its database's submitting sponsor (`claimSubmitter`). */
+  #submitter: DatabaseSync | undefined;
 
   constructor(path: string) {
+    this.#path = path;
     this.#db = new DatabaseSync(path);
     this.#db.exec(`
       PRAGMA journal_mode = WAL;
@@ -173,6 +184,41 @@ export class SponsorStore {
     if (!columns.some((c) => c.name === "paymaster")) {
       this.#db.exec("ALTER TABLE ledger ADD COLUMN paymaster TEXT");
     }
+  }
+
+  /**
+   * Makes this store its database's one submitting sponsor until `close`, or throws while another
+   * running sponsor is: start-up releases what was left reserved, and nonces come from the
+   * database, which is only safe with no other sponsor submitting from it. The claim is an
+   * exclusive SQLite lock on `<database>.lock` beside the database's real path (symlinks resolved,
+   * so every path to the file names one lock), which the OS drops when its process exits, closed
+   * or crashed. A database file with more than one hard link is refused: no path is common to its
+   * links, and SQLite names its own journal files by path too. Ledgers that are never started
+   * (`sponsor relayer status|bump|cancel`) and readers do not claim; an in-memory database is never
+   * shared.
+   */
+  claimSubmitter(): void {
+    if (this.#submitter || this.#path === ":memory:" || this.#path === "") return;
+    const file = realpathSync(this.#path);
+    const { nlink } = statSync(file);
+    if (nlink > 1) {
+      throw new Error(
+        `the sponsor database ${this.#path} has ${nlink} hard links; a sponsor submits only from a database file with one: remove the other links`,
+      );
+    }
+    const lock = new DatabaseSync(`${file}.lock`);
+    try {
+      lock.exec("BEGIN EXCLUSIVE");
+    } catch (error) {
+      lock.close();
+      // SQLITE_BUSY: another connection, in this process or another, holds the lock.
+      if ((error as { errcode?: number }).errcode !== 5) throw error;
+      throw new Error(
+        `the sponsor database ${this.#path} is in use by another running sponsor; one sponsor submits from a database at a time: retry once it has stopped`,
+      );
+    }
+    this.#submitter = lock;
+    claims.add(lock);
   }
 
   /** Runs `fn` in one write transaction (`BEGIN IMMEDIATE`), rolled back if it throws; nests. */
@@ -343,5 +389,10 @@ export class SponsorStore {
 
   close(): void {
     this.#db.close();
+    if (this.#submitter) {
+      claims.delete(this.#submitter);
+      this.#submitter.close();
+    }
+    this.#submitter = undefined;
   }
 }

@@ -14,6 +14,7 @@ import {
   loadProfileSigner,
   MantleAccount,
   PASSWORD_ENV,
+  type PanicResult,
   type Profile,
   RelayerExecutor,
   readProfiles,
@@ -22,6 +23,7 @@ import {
   type Signer,
   saveKey,
   saveProfile,
+  UndelegationFailedError,
 } from "@mantle-aa/sdk";
 import {
   EMBEDDED_PAYMASTER_SIGNER_KEY_ENV,
@@ -36,6 +38,7 @@ import {
 } from "@mantle-aa/sponsor";
 import {
   type Address,
+  BaseError,
   type Client,
   createPublicClient,
   getAddress,
@@ -45,7 +48,7 @@ import {
   zeroHash,
 } from "viem";
 import { generatePrivateKey, type LocalAccount, privateKeyToAddress } from "viem/accounts";
-import { describeError, NotAvailableError, redact, UsageError } from "./errors.js";
+import { describeError, redact, UsageError } from "./errors.js";
 import {
   amount,
   parseCalls,
@@ -106,6 +109,10 @@ const USAGE = `usage: mantle-aa <command> [options]
   account init     [--grant <policy.json> --agent <name>] [--root <name>]
   account status   [--root <name>]
   account exec     --calls <json> [--release <keyHash,token,amount>]... [--root <name>]
+  account panic    [--self-pay [--undelegate]] [--root <name>]
+                   (revokes every session key in one transaction; --self-pay: the root sends
+                   and pays for it, no sponsor needed; --undelegate: then clears the EIP-7702
+                   delegation, a root transaction too, so it needs --self-pay)
   session grant    --agent <name> --policy <policy.json> [--root <name>]
   session update   --agent <name> --policy <policy.json>
   session revoke   --agent <name>
@@ -118,8 +125,8 @@ const USAGE = `usage: mantle-aa <command> [options]
 
 options:  --json  --rpc-url <url>  --sponsor-url <url>
           --via relayer|bundler  --bundler-url <url>
-          (--via: the path account init|exec, session grant|update|revoke and agent exec
-          submit through; default relayer. --via bundler needs a bundler URL.)
+          (--via: the path account init|exec|panic, session grant|update|revoke and agent
+          exec submit through; default relayer. --via bundler needs a bundler URL.)
 env:      ${RPC_URL_ENV}, ${SPONSOR_URL_ENV}, ${BUNDLER_URL_ENV}, ${PASSWORD_ENV}, ${HOME_ENV},
           ${EMBEDDED_SWITCH_ENV}=1 with MANTLE_AA_RELAYER_KEY (embedded sponsor),
           and ${EMBEDDED_PAYMASTER_SIGNER_KEY_ENV} for --via bundler
@@ -212,8 +219,10 @@ class Context {
    * The executor for `account`'s batches, on the `--via` path. The sponsor (and the bundler) are
    * reached on first submission only: `--sponsor-url` / MANTLE_AA_SPONSOR_URL, or with
    * MANTLE_AA_EMBEDDED_RELAYER=1 an embedded sponsor (allowlisting `account`, its ledger under the
-   * profile directory) closed at exit. A batch that reverted on chain throws
-   * `ExecutionRevertedError`.
+   * profile directory) closed at exit. One embedded sponsor runs per home at a time: a command
+   * that submits while another one's embedded sponsor runs on the same home fails (exit 1, the
+   * database is in use by another running sponsor) before anything is sent. A batch that reverted
+   * on chain throws `ExecutionRevertedError`.
    */
   executor(account: Address): Executor {
     let inner: Promise<Executor> | undefined;
@@ -522,9 +531,29 @@ export const COMMANDS: Record<string, Command> = {
     },
   },
   "account panic": {
-    options: { "self-pay": { type: "boolean" }, undelegate: { type: "boolean" } },
-    async run() {
-      throw new NotAvailableError("account panic is not available in this version");
+    options: { ...ROOT, "self-pay": { type: "boolean" }, undelegate: { type: "boolean" } },
+    async run(ctx, v) {
+      const selfPay = v["self-pay"] === true;
+      const undelegate = v.undelegate === true;
+      if (undelegate && !selfPay) {
+        throw new UsageError(
+          "--undelegate needs --self-pay: the sponsor relays no delegation to the zero address, so the root sends it",
+        );
+      }
+      const account = await mantleAccount(ctx, rootProfile(ctx, await ctx.keystore()), true);
+      let result: PanicResult;
+      try {
+        result = await account.panic({ selfPay, undelegate });
+      } catch (error) {
+        if (error instanceof UndelegationFailedError) throw error;
+        const why = error instanceof BaseError ? error.shortMessage : (error as Error)?.message;
+        throw new Error(
+          `Revocation (phase 1) not confirmed${undelegate ? "; undelegation (phase 2) not attempted" : ""}: ${why}. ` +
+            `Check account status, then rerun account panic${selfPay ? "" : " (with --self-pay, after funding the root, if the sponsor is down)"}`,
+          { cause: error },
+        );
+      }
+      return { account: account.address, ...result, recovery: panicRecovery(result) };
     },
   },
   "session grant": {
@@ -611,6 +640,19 @@ export const COMMANDS: Record<string, Command> = {
   "sponsor relayer bump": relayerCommand("bump"),
   "sponsor relayer cancel": relayerCommand("cancel"),
 };
+
+/** What the root does after a panic (docs/DESIGN.md §7.3). */
+function panicRecovery(result: PanicResult): string[] {
+  return [
+    ...(result.undelegation
+      ? [
+          "The account is undelegated; its keys, nonces and hook storage remain. To use it as a smart account again, run account init: revoked keys stay revoked.",
+        ]
+      : []),
+    "Revoked keys never come back. Their inventory stays frozen until the root releases it: account exec --release <keyHash,token,amount>.",
+    "Grant new sessions with session grant (always a new key).",
+  ];
+}
 
 async function agentSession(ctx: Context, agent: string, submits: boolean) {
   const options = await ctx.keystore(true);

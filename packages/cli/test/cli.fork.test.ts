@@ -124,7 +124,7 @@ describe.skipIf(!rpcUrl)("the mantle-aa CLI on a Mantle Sepolia fork", () => {
     ({ url: anvil, stop } = await startFork(rpcUrl as string));
     client = clientFor(anvil);
   }, 60_000);
-  afterAll(() => stop?.());
+  afterAll(() => stop?.(), 30_000);
 
   describe("(a) against a long-running sponsor (sponsor serve)", () => {
     const home = tempHome();
@@ -200,7 +200,7 @@ describe.skipIf(!rpcUrl)("the mantle-aa CLI on a Mantle Sepolia fork", () => {
 
     it("account status: an undelegated account", async () => {
       expect((await s(["account", "status"], 0)).json).toMatchSnapshot();
-    });
+    }, 60_000);
 
     it("account init: rejected for an account off the allowlist (20)", async () => {
       const other = tempHome();

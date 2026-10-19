@@ -1,7 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import {
   AgentSession,
   type Call,
@@ -171,10 +170,13 @@ describe.skipIf(!rpcUrl)("RelayerExecutor against the sponsor on a Mantle Sepoli
     await rpc("evm_setAutomine", [false]);
     try {
       const pending = agent().exec([approve(456n)]);
-      // The sponsor submits it and answers `pending` after its 1 s settle wait; nothing is mined.
-      await sleep(2500);
+      // The sponsor submits it and answers `pending` after its 1 s settle wait; nothing is mined, so
+      // the executor posts it again. Waits for that second POST however long the first round trip takes.
       const relays = () => posts.mock.calls.filter(([u, i]) => u === base && i?.method === "POST");
-      expect(relays().length).toBeGreaterThanOrEqual(2);
+      await vi.waitFor(() => expect(relays().length).toBeGreaterThanOrEqual(2), {
+        timeout: 30_000,
+        interval: 100,
+      });
       expect(new Set(relays().map(([, i]) => i?.body)).size).toBe(1);
 
       const busy = await account.exec([approve(1n)]).catch((e: unknown) => e);

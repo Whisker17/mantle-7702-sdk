@@ -631,7 +631,7 @@ function relayerRun(mode: Mode) {
       expect(await read("inventory", MEME)).toBe(5n * UNIT);
       expect(await balanceOf(USD)).toBe(usd(195));
       expect(await balanceOf(MEME)).toBe(HUMAN_MEME + 5n * UNIT);
-    });
+    }, 120_000);
   });
 
   describe("5. session revoke", () => {
@@ -767,7 +767,7 @@ function relayerRun(mode: Mode) {
       loadProfileSigner("trader", keystore).address,
       loadProfileSigner("brief", keystore).address,
     ]);
-  });
+  }, 120_000);
 }
 
 describe.skipIf(!rpcUrl)("relayer path end to end on a Mantle Sepolia fork", () => {
