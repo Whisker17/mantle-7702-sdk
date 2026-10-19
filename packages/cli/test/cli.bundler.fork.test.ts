@@ -1,8 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { type Call, launchpadAbi, loadDeployments, readProfiles } from "@mantle-aa/sdk";
-import { SponsorStore } from "@mantle-aa/sponsor";
+import { type Call, launchpadAbi, loadDeployments, readProfiles } from "@0xwh1sker/mantle-aa-sdk";
+import { SponsorStore } from "@0xwh1sker/mantle-aa-sponsor";
 import { type Address, encodeFunctionData, erc20Abi, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAddress } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

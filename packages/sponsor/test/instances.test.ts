@@ -4,7 +4,7 @@ import { linkSync, mkdtempSync, symlinkSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SponsorRejectCode } from "@mantle-aa/sdk";
+import { SponsorRejectCode } from "@0xwh1sker/mantle-aa-sdk";
 import { type Address, pad, toHex } from "viem";
 import { generatePrivateKey, type LocalAccount, privateKeyToAccount } from "viem/accounts";
 import { afterEach, describe, expect, it } from "vitest";

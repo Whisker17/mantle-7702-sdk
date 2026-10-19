@@ -1,4 +1,4 @@
-import { getChain, redactUrls } from "@mantle-aa/sdk";
+import { getChain, redactUrls } from "@0xwh1sker/mantle-aa-sdk";
 import { createPublicClient, http } from "viem";
 import { loadConfig, type SponsorConfig } from "./config.js";
 import { Ledger } from "./ledger.js";

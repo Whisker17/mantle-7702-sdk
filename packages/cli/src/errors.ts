@@ -8,7 +8,7 @@ import {
   redactUrls,
   SponsorBusyError,
   SponsorRejectedError,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import { BaseError } from "viem";
 
 /** A malformed command line or a missing setting (RPC URL, sponsor, profile). */

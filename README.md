@@ -14,20 +14,36 @@ The human and the agents hold 0 MNT; a sponsor pays the gas.
 
 | Read | For |
 | --- | --- |
-| This file | The quick start and the exit codes |
+| This file | Installing from npm, the quick start and the exit codes |
 | [`docs/policy.md`](docs/policy.md) | The `policy.json` a session is granted with |
-| [`docs/usage.md`](docs/usage.md) | Running a sponsor and the bundler path, the SDK from TypeScript, consuming the packages, the launchpad contract, known limits |
+| [`docs/usage.md`](docs/usage.md) | Running a sponsor and the bundler path, the SDK from TypeScript, installing the packages, the launchpad contract, known limits |
 | [`packages/cli/README.md`](packages/cli/README.md) | CLI settings, profiles, `account panic`, the `--json` output |
 | [`docs/DESIGN.md`](docs/DESIGN.md) | The spec of record: trust model, hook rules, invariants |
 | [`docs/acceptance.md`](docs/acceptance.md) | The full acceptance run on Mantle Sepolia, with transaction links |
 
+## Install
+
+The SDK, the sponsor and the CLI are published to npm under the owner's `@0xwh1sker` scope
+(MIT). Each needs Node 24 or later.
+
+| Package | Install | For |
+| --- | --- | --- |
+| `@0xwh1sker/mantle-aa-cli` | `npm i -g @0xwh1sker/mantle-aa-cli`, or run it without installing: `npx -y @0xwh1sker/mantle-aa-cli <args>` | The `mantle-aa` command |
+| `@0xwh1sker/mantle-aa-sdk` | `npm i @0xwh1sker/mantle-aa-sdk viem` | The SDK from TypeScript; `viem` is a peer dependency |
+| `@0xwh1sker/mantle-aa-sponsor` | `npm i @0xwh1sker/mantle-aa-sponsor` | Running a sponsor in process (`startSponsor`); the CLI's `sponsor serve` already uses it |
+
+The SDK ships the Mantle Sepolia address book, so nothing else is needed for the relayer path.
+The self-hosted bundler stack (`e2e/bundler/sepolia.sh`, a pinned Alto), the contracts and the
+end-to-end suites are not in any package: they are in this repository only. Details and the
+contributor setup: [`docs/usage.md`](docs/usage.md#installing-the-packages).
+
 ## Requirements
 
-Node 24, pnpm 11, Foundry (`cast`; `anvil` for the bundler path), `jq` and `curl`. Access to this
-private repository. A Mantle Sepolia wallet with about 0.2 MNT to be the sponsor's relayer.
-For the bundler path also: the private key of the deployed VerifyingPaymaster's signer
-(`0x7223c837518A51eF0f6c40d67B539D1Aa29a67E9`, held by the operator of this deployment) and a
-second funded wallet for the bundler's executor.
+Node 24 or later with npm, Foundry (`cast`; `anvil` for the bundler path), `jq` and `curl`. A
+Mantle Sepolia wallet with about 0.2 MNT to be the sponsor's relayer. For the bundler path also:
+`git` (the bundler stack is in this repository, not in the packages), the private key of the
+deployed VerifyingPaymaster's signer (`0x7223c837518A51eF0f6c40d67B539D1Aa29a67E9`, held by the
+operator of this deployment) and a second funded wallet for the bundler's executor.
 
 ## Quick start (Mantle Sepolia)
 
@@ -36,15 +52,10 @@ upgrade with a first session, an agent buying and selling on the mock launchpad,
 policy refuses, a submission through a bundler, and a revoke. The commands are meant to be pasted
 into one bash shell, in order.
 
-### 1. Build and configure
+### 1. Install and configure
 
 ```bash
-git clone git@github.com:Whisker17/mantle-7702-sdk.git
-cd mantle-7702-sdk
-pnpm install --frozen-lockfile
-pnpm build
-MANTLE_AA_CLI="$PWD/packages/cli/dist/bin.js"
-mantle-aa() { node "$MANTLE_AA_CLI" "$@"; }
+npm i -g @0xwh1sker/mantle-aa-cli          # provides the mantle-aa command
 
 export MANTLE_AA_RPC_URL=https://rpc.sepolia.mantle.xyz
 export MANTLE_AA_HOME=$(mktemp -d)          # keystores and profiles; default ~/.mantle-aa
@@ -98,14 +109,14 @@ policy:
   dailyBudgetMnt: "1"
   managementReserveMnt: "0.4"
 EOF
-node "$MANTLE_AA_CLI" sponsor serve --config "$MANTLE_AA_HOME/sponsor.yaml" >"$MANTLE_AA_HOME/sponsor.log" 2>&1 &
+mantle-aa sponsor serve --config "$MANTLE_AA_HOME/sponsor.yaml" >"$MANTLE_AA_HOME/sponsor.log" 2>&1 &
 SPONSOR_PID=$!
 for i in $(seq 30); do curl -sf http://127.0.0.1:8548/health && break; sleep 1; done; echo
 export MANTLE_AA_SPONSOR_URL=http://127.0.0.1:8548
 ```
 
-The sponsor runs in the background (`node` directly, so `$SPONSOR_PID` is its process) and logs
-to `sponsor.log`. `/health` answers `{"status":"ok","chainId":5003,"sponsor":"<relayer>"}`. Without a paymaster
+The sponsor runs in the background and logs to `sponsor.log`; `$SPONSOR_PID` is its process
+(use the installed `mantle-aa` here: under `npx` it would be npx's). `/health` answers `{"status":"ok","chainId":5003,"sponsor":"<relayer>"}`. Without a paymaster
 signer key, delete the `paymasterSignerKey` line: the relayer path works, the bundler path does
 not. Keep `maxFeePerRequestMnt` at 0.1 or more: the upgrade with the first grant costs up to
 ≈0.055 MNT, so the 0.05 of older examples refuses it. All fields: [`docs/usage.md`](docs/usage.md#running-a-sponsor).
@@ -198,16 +209,19 @@ revoked), its policy, the remaining limits and the meme inventory attributed to 
 The same agent call can go as an ERC-4337 UserOperation, sponsored by the deployed
 VerifyingPaymaster (the sponsor signs its paymaster data). `e2e/bundler/sepolia.sh` starts the
 self-hosted bundler stack against Mantle Sepolia: Alto in safe mode on port 4337, tracing on a
-local anvil fork (ports 18545 and 18546). It needs the executor's key and `npm`; the first start
-installs the pinned Alto.
+local anvil fork (ports 18545 and 18546). The stack is not in the npm packages; it needs a clone
+of this repository (no build), the executor's key and `npm`; the first start installs the pinned
+Alto.
 
 ```bash
+git clone https://github.com/Whisker17/mantle-7702-sdk.git "$MANTLE_AA_HOME/repo"
+BUNDLER_SH="$MANTLE_AA_HOME/repo/e2e/bundler/sepolia.sh"
 read -rs BUNDLER_PRIVATE_KEY && export BUNDLER_PRIVATE_KEY   # the funded executor wallet, 0x…
 export BUNDLER_RUN_DIR="$MANTLE_AA_HOME/bundler"
-e2e/bundler/sepolia.sh up
+"$BUNDLER_SH" up
 SELL=$(cast calldata 'sell(address,uint256,uint256,uint256,address)' "$MEME" 1000000000000000000000 0 $(($(date +%s) + 300)) "$ACCOUNT")
 mantle-aa agent exec --agent trader --calls "[{\"to\":\"$PAD\",\"data\":\"$SELL\"}]" --via bundler --bundler-url http://127.0.0.1:4337
-e2e/bundler/sepolia.sh down
+"$BUNDLER_SH" down
 ```
 
 The result carries the bundle's transaction hash. Every submitting command accepts
@@ -262,7 +276,10 @@ Which SDK error maps to which code: [`packages/cli/README.md`](packages/cli/READ
 
 ## Development
 
+From a clone; pnpm 11 as well as Node 24 or later.
+
 ```bash
+git clone https://github.com/Whisker17/mantle-7702-sdk.git && cd mantle-7702-sdk
 pnpm install --frozen-lockfile
 pnpm check        # lint + typecheck + test
 cd contracts && forge fmt --check && forge build --sizes && forge test -vvv

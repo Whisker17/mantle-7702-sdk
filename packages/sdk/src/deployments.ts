@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { type Address, getAddress, isAddress } from "viem";
+import { MANTLE_SEPOLIA } from "./mantle-sepolia.js";
 
 /** The subset of a `deployments/<network>.json` record the SDK reads. */
 export interface DeploymentRecord {
@@ -24,14 +25,13 @@ export interface AddressBook {
   memeToken: Address;
 }
 
-const MANTLE_SEPOLIA_FILE = new URL("../../../deployments/mantle-sepolia.json", import.meta.url);
-
 /**
- * Load an address book from a deployment record, a path to one, or (by default) the committed
- * `deployments/mantle-sepolia.json`. Every address is validated and checksummed.
+ * Load an address book from a deployment record, a path to one, or (by default) the Mantle Sepolia
+ * book shipped with the package, a copy of the committed `deployments/mantle-sepolia.json`. Every
+ * address is validated and checksummed.
  */
 export function loadDeployments(
-  source: string | URL | DeploymentRecord = MANTLE_SEPOLIA_FILE,
+  source: string | URL | DeploymentRecord = MANTLE_SEPOLIA,
 ): AddressBook {
   const record: DeploymentRecord =
     typeof source === "string" || source instanceof URL

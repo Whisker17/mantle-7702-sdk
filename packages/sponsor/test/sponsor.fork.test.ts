@@ -20,7 +20,7 @@ import {
   SPONSOR_REJECTED_RPC_CODE,
   SponsorRejectCode,
   secp256k1KeyHash,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import { type Address, encodeFunctionData, getAddress, type Hex, zeroAddress } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

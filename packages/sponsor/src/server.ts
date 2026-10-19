@@ -9,7 +9,7 @@ import {
   SPONSOR_REJECTED_RPC_CODE,
   SPONSOR_RELAY_METHOD,
   SponsorRejectCode,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import type { Client, Hex } from "viem";
 import {
   checkValidity,

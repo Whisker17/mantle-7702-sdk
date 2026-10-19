@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { type AddressBook, loadDeployments } from "@mantle-aa/sdk";
+import { type AddressBook, loadDeployments } from "@0xwh1sker/mantle-aa-sdk";
 import { type Address, getAddress, isAddress, parseEther } from "viem";
 import { parse } from "yaml";
 
