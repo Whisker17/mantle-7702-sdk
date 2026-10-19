@@ -1,6 +1,6 @@
 {
   "name": "@0xwh1sker/mantle-aa-sponsor",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "The gas sponsor for @0xwh1sker/mantle-aa-sdk accounts on Mantle: a JSON-RPC relayer and an ERC-7677 paymaster service with per-account budgets.",
   "keywords": [
     "mantle",
