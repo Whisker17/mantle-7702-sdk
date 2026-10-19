@@ -7,7 +7,7 @@
 // checks that Alto validates and bundles a UserOp while an earlier bundle is still unmined.
 // Skipped when MANTLE_SEPOLIA_RPC_URL is unset; CI sets it and fails on a skip.
 import { setTimeout as sleep } from "node:timers/promises";
-import { loadDeployments } from "@mantle-aa/sdk";
+import { loadDeployments } from "@0xwh1sker/mantle-aa-sdk";
 import { concat, encodeFunctionData, erc20Abi, parseAbi } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

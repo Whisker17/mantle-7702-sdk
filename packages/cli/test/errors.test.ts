@@ -7,7 +7,7 @@ import {
   PolicyViolationError,
   SponsorBusyError,
   SponsorRejectedError,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import { HttpRequestError } from "viem";
 import { describe, expect, it } from "vitest";
 import { describeError, EXIT_CODES, NotAvailableError, UsageError } from "../src/index.js";

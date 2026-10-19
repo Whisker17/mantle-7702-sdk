@@ -34,8 +34,8 @@ import {
   type Signer,
   SponsorRejectedError,
   signBatchedCall,
-} from "@mantle-aa/sdk";
-import { startEmbeddedSponsor } from "@mantle-aa/sponsor";
+} from "@0xwh1sker/mantle-aa-sdk";
+import { startEmbeddedSponsor } from "@0xwh1sker/mantle-aa-sponsor";
 import {
   type Address,
   BaseError,

@@ -11,7 +11,7 @@ import {
   paymasterRequestDigest,
   recoverPaymasterRequestSigner,
   SponsorRejectCode,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import {
   type Address,
   type Client,

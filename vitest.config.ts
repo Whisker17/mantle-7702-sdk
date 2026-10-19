@@ -4,8 +4,10 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
-      "@mantle-aa/sdk": fileURLToPath(new URL("./packages/sdk/src/index.ts", import.meta.url)),
-      "@mantle-aa/sponsor": fileURLToPath(
+      "@0xwh1sker/mantle-aa-sdk": fileURLToPath(
+        new URL("./packages/sdk/src/index.ts", import.meta.url),
+      ),
+      "@0xwh1sker/mantle-aa-sponsor": fileURLToPath(
         new URL("./packages/sponsor/src/index.ts", import.meta.url),
       ),
     },

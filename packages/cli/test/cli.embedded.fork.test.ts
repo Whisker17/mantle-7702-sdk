@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { readProfiles } from "@mantle-aa/sdk";
-import { startEmbeddedSponsor } from "@mantle-aa/sponsor";
+import { readProfiles } from "@0xwh1sker/mantle-aa-sdk";
+import { startEmbeddedSponsor } from "@0xwh1sker/mantle-aa-sponsor";
 import { type Address, toHex } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

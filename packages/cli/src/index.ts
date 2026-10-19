@@ -1,4 +1,4 @@
-export const PACKAGE_NAME = "@mantle-aa/cli";
+export const PACKAGE_NAME = "@0xwh1sker/mantle-aa-cli";
 
 export { type CliIO, COMMANDS, HOME_ENV, RPC_URL_ENV, run, SPONSOR_URL_ENV } from "./cli.js";
 export {

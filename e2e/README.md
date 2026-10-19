@@ -111,10 +111,10 @@ The last run's transaction links and spend are in `docs/acceptance.md`.
 node --experimental-transform-types --import ./e2e/source-hooks.mjs e2e/sepolia.ts [relayer] [bundler] [value] [panic]
 ```
 
-Plain Node runs the workspace sources directly: `source-hooks.mjs` resolves `@mantle-aa/*` to
-`packages/*/src` and a missing `./x.js` import to `./x.ts`, and `--experimental-transform-types`
-strips the types. No build step is needed. Run it detached (`nohup … &`, log and PID file), because a
-run takes about an hour.
+Plain Node runs the workspace sources directly: `source-hooks.mjs` resolves `@0xwh1sker/mantle-aa-*`
+to `packages/*/src` and a missing `./x.js` import to `./x.ts`, and `--experimental-transform-types`
+strips the types. No build step is needed. Run it detached (`nohup … &`, log and PID file), because
+a run takes about an hour.
 
 - Env: `MANTLE_SEPOLIA_RPC_URL`; `ACCEPTANCE_RELAYER_KEY` (the sponsor's relayer hot wallet);
   `ACCEPTANCE_FUNDER_KEY` (a funded third-party EOA: the direct on-chain submissions, the

@@ -19,7 +19,7 @@ import {
   SponsorBusyError,
   SponsorRejectCode,
   SponsorRejectedError,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import { encodeFunctionData, parseEther, zeroAddress } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";

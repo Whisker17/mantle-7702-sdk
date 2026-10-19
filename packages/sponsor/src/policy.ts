@@ -1,4 +1,9 @@
-import { agentPolicyHookAbi, caliburAbi, erc20Abi, SponsorRejectCode } from "@mantle-aa/sdk";
+import {
+  agentPolicyHookAbi,
+  caliburAbi,
+  erc20Abi,
+  SponsorRejectCode,
+} from "@0xwh1sker/mantle-aa-sdk";
 import {
   type Address,
   BaseError,

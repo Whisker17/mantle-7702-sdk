@@ -106,8 +106,8 @@ mantle-7702-sdk/
 │  ├─ script/                         # CaliburEntry, Hook (address mining), Paymaster, mocks
 │  └─ test/                           # unit / fuzz / invariant / entry-point matrix
 ├─ packages/
-│  ├─ sdk/                    # @mantle-aa/sdk (private)
-│  ├─ cli/                    # @mantle-aa/cli (private)
+│  ├─ sdk/                    # @0xwh1sker/mantle-aa-sdk (private)
+│  ├─ cli/                    # @0xwh1sker/mantle-aa-cli (private)
 │  └─ sponsor/                # sponsor service
 ├─ e2e/                       # anvil fork + Alto; Sepolia script
 ├─ deployments/               # mantle-sepolia.json

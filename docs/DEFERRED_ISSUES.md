@@ -151,6 +151,12 @@ tests or CI.
   bundler harness (`e2e/bundler/harness.ts::localSystemRings`). Applying it to `startFork` would
   give margin; it carries the test-fidelity caveat of the harness entry below. Revisit when the
   job passes ~17 minutes again, or with the next change to `fork.ts`.
+  Update at the 0.1.3 release review: #46 and #52 added `packages/cli/test/cli.panic.fork.test.ts`
+  and `packages/cli/test/cli.embedded.fork.test.ts` to the `typescript` job, which took 290 s,
+  340 s and 322 s on the three 0.1.3 candidates (`5d6ed26`, `2bf1046`, `21eaadb`; the `e2e` job
+  240–318 s of its 30 minutes). Neither `ci.yml` nor `fork.ts` changed in 0.1.3, so the drop from
+  the 0.1.2 times is not a fix: the fork suites still depend on public-RPC latency, and the
+  revisit condition stands.
 - **The fee-bound test does not record where its oracle values come from** (Low, #27).
   `packages/sponsor/test/fees.test.ts::SPIKE`: the `oracle.l1FeeUpperBound` values for sizes
   2076 (type-4 grant, 79 885) and 860 (session call, 33 812) were not measured by the 0.1.0
@@ -247,6 +253,12 @@ entry here. None of the nine weakens an on-chain invariant of `docs/DESIGN.md` �
   in `docs/infra.md` §10.6). It is an operational risk for the Mantle Sepolia acceptance run.
   Options: stake the paymaster, run a bundler with the fix, watch for `2nd Validation error` in
   its log. Revisit before the Sepolia acceptance, or when Alto releases a fix.
+  Occurrence at the 0.1.3 release review: in the Mantle Sepolia acceptance run on candidate
+  `5d6ed26`, the bundler phase's first `agent exec` approve + buy was not included within the SDK's
+  120 s receipt wait while Alto logged repeated `2nd Validation error`. `e2e/sepolia.ts`
+  (`submit`) recorded the incident, restarted the stack, checked that no op of the account had
+  landed and retried; the phase and the run completed. No `-32505` refusal was seen, and the runs
+  on the next two candidates had no incident. Still open on the same terms.
 - **After a late bundler refusal, `BundlerExecutor.submit` waits out its whole receipt bound**
   (Low, #35). `packages/sdk/src/executors/bundler.ts::BundlerExecutor.submit` sets
   `validUntil = min(now + validitySeconds (60 s), request.deadline)` when `submit` starts, so the
@@ -268,6 +280,63 @@ entry here. None of the nine weakens an on-chain invariant of `docs/DESIGN.md` �
   or beacon roots, each block writes its real values, and the changes made the suites
   deterministic. Revisit if a contract or test starts reading historical system-contract values,
   or when an operated bundler with a single executor is used.
+
+The next four entries were accepted at the 0.1.3 release review (final candidate `21eaadb`). All
+three review rounds judged them non-blocking for the testnet POC, and 0.1.3 shipped with them. The
+other two items accepted there are updates to existing entries: the Alto re-validation entry
+(one occurrence in an acceptance run) and the CI `typescript` job's margin. None of the four
+weakens an on-chain invariant of `docs/DESIGN.md` §4.2.5.
+
+- **`account panic` reports an unknown outcome as a known one** (Low, #46).
+  `packages/sdk/src/account/panic.ts::UndelegationFailedError` / `account.ts::MantleAccount.panic`
+  / `packages/cli/src/cli.ts` (`account panic`): every phase-2 failure is wrapped in a message that
+  ends "Every non-root key is revoked and the account is still delegated; retry the undelegation".
+  That is only known when the state read succeeds and shows the account delegated. If the
+  undelegation's receipt is successful and the following `state()` read fails, or the receipt
+  wait (`SELF_PAY_RECEIPT_TIMEOUT_MS`) runs out, the outcome is unknown. The error then carries no
+  phase-2 hash, because `UndelegationFailedError` keeps only `revocation`, and `sendSelf` throws
+  before returning its hash. Likewise the CLI wraps every other panic error as "Revocation
+  (phase 1) not confirmed", and `packages/cli/README.md` (Panic) says that means the revocation did
+  not land; after a receipt or sponsor timeout it may still land. Raised as a suggestion in all
+  three review rounds; accepted because phase 1, when confirmed, is never undone by this, no
+  session authority comes back, and a retry after a landed undelegation fails with "The account is
+  not delegated" rather than doing harm. Fix: say "could not be confirmed" unless a successful
+  read establishes the state, keep any known hash on the error (return it from `sendSelf` before
+  the receipt wait), tell the operator to check the receipt and `account status` before retrying,
+  and align the README. Revisit with the next change to panic or the SDK error model.
+- **The sponsored bundler-path panic was never measured at the worst case** (Low, #46).
+  `packages/cli/test/cli.panic.fork.test.ts` measures the §4.2.3 worst case (8 revokes, 8
+  tombstones, 128 allowance resets in one transaction) through the relayer (1,848,713 gas) and
+  self-paid (1,619,414) only. `account panic --via bundler` sends the same batch as a UserOperation
+  (EntryPoint validation, paymaster, the bundler's estimates and limits), and no test or
+  acceptance run sends it at that size, so whether the bundler and the sponsor's caps admit it is
+  not established. Accepted because `--self-pay` needs neither sponsor nor bundler and is the
+  documented path when the sponsor is unavailable, and the Mantle Sepolia acceptance's panic phase
+  covers the self-paid path. Fix: a bundler-path worst-case case on the bundler fork harness
+  (`e2e/bundler/harness.ts`), recording the op's gas. Revisit before recommending the bundler
+  path for panic, or with the next change to panic or `BundlerExecutor`.
+- **Under slow upstream RPC, the long-running sponsor's simulation hits viem's request timeout**
+  (Low, #51). `packages/sponsor/src/main.ts::startSponsor` builds its client with
+  `http(config.rpcUrl, { timeout: 10_000 })`, and `packages/sponsor/src/policy.ts::estimateOrReject`
+  turns a timed-out `eth_estimateGas` into `SIMULATION_FAILED (The request took too long to
+  respond.)`. While #51 bounded the fork-suite timeouts, a local proxy added ≈750 ms to every
+  upstream call (with a CPU load) in front of an anvil fork: `account init --grant` against
+  `sponsor serve` in `packages/cli/test/cli.fork.test.ts` was refused that way, identically before
+  and after #51, and the dependent tests of that group failed (the embedded case of the same run
+  passed). The refusal is structured and nothing is sent. Accepted because it appears only under
+  injected latency on a cold fork, and no CI or acceptance run hit it. Fix: make the timeout
+  configurable in the sponsor config, or raise it for the simulation calls. Revisit if an operated
+  sponsor sees `SIMULATION_FAILED` timeouts against a slow or remote RPC.
+- **The bundler stack passes the upstream RPC URL on anvil's command line** (Low, #57).
+  `e2e/bundler/sepolia.sh` (`start`) runs `anvil --fork-url "$UPSTREAM_RPC_URL" …`, so a URL
+  carrying an API key is visible to every local user through `ps` while the stack runs. It is
+  written to no file: anvil's output goes through `REDACT_URLS`, and `trace-proxy.mjs` never logs
+  the upstream and redacts URLs in the errors it passes on (#58). Accepted because the script is a
+  single-operator tool on the operator's own machine, and the default is the public,
+  credential-free `https://rpc.sepolia.mantle.xyz`. anvil reads the fork URL from no environment
+  variable. Fix: start anvil unforked and let `trace-proxy.mjs` fork it with the `anvil_reset` it
+  already sends (`params: [{ forking: { jsonRpcUrl } }]`, over local HTTP). Revisit before the
+  stack runs on a shared host with a credentialed RPC URL.
 
 ---
 

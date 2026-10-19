@@ -9,7 +9,7 @@ import {
   secp256k1KeyHash,
   signedBatchedCallTypes,
   signRelayRequest,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import {
   type Address,
   encodeAbiParameters,

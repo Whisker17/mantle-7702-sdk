@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { PACKAGE_NAME } from "../src/index.js";
 
-describe("@mantle-aa/sponsor", () => {
+describe("@0xwh1sker/mantle-aa-sponsor", () => {
   it("exposes its entry point", () => {
-    expect(PACKAGE_NAME).toBe("@mantle-aa/sponsor");
+    expect(PACKAGE_NAME).toBe("@0xwh1sker/mantle-aa-sponsor");
   });
 });
