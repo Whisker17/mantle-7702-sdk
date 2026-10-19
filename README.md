@@ -98,13 +98,14 @@ policy:
   dailyBudgetMnt: "1"
   managementReserveMnt: "0.4"
 EOF
-mantle-aa sponsor serve --config "$MANTLE_AA_HOME/sponsor.yaml" >"$MANTLE_AA_HOME/sponsor.log" 2>&1 &
+node "$MANTLE_AA_CLI" sponsor serve --config "$MANTLE_AA_HOME/sponsor.yaml" >"$MANTLE_AA_HOME/sponsor.log" 2>&1 &
 SPONSOR_PID=$!
-for i in $(seq 30); do curl -sf http://127.0.0.1:8548/health && break; sleep 1; done
+for i in $(seq 30); do curl -sf http://127.0.0.1:8548/health && break; sleep 1; done; echo
 export MANTLE_AA_SPONSOR_URL=http://127.0.0.1:8548
 ```
 
-`/health` answers `{"status":"ok","chainId":5003,"sponsor":"<relayer>"}`. Without a paymaster
+The sponsor runs in the background (`node` directly, so `$SPONSOR_PID` is its process) and logs
+to `sponsor.log`. `/health` answers `{"status":"ok","chainId":5003,"sponsor":"<relayer>"}`. Without a paymaster
 signer key, delete the `paymasterSignerKey` line: the relayer path works, the bundler path does
 not. Keep `maxFeePerRequestMnt` at 0.1 or more: the upgrade with the first grant costs up to
 ≈0.055 MNT, so the 0.05 of older examples refuses it. All fields: [`docs/usage.md`](docs/usage.md#running-a-sponsor).
