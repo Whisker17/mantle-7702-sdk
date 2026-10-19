@@ -631,6 +631,8 @@ suite for both of its ops. In 9 loaded local runs (3 rounds × 3 concurrent copi
 bundler fork suites, plus 6 CPU burners) the trace was already logged when the receipt
 arrived, every time.
 
-**Result on CI** (job wall times on the same runner type): the `e2e` job went from 20.2 min on
-the base branch (path suite 870 s) to 8.7 min (path suite 181 s). The `typescript` job went from
-13.1 to 12.1 min (`cli.bundler.fork.test.ts` 131 s to 83 s).
+**Result on CI** (job wall times, three runs of the same commit): the `e2e` job took 7.4–8.3 min,
+against 20.2 min on the base branch and 10–25 min before; the path suite took 155–159 s, against
+870 s. The `typescript` job took 11.6–14.0 min, against 13.1 min on the base branch. Most of that
+job is suites outside this harness; its two bundler suites took 110–133 s together, against
+157 s.
