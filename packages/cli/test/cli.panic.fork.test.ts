@@ -227,7 +227,7 @@ describe.skipIf(!rpcUrl)("account panic on a Mantle Sepolia fork", () => {
     expect(await keyCount()).toBe(BigInt(SESSIONS));
     snapshot = await rpc("evm_snapshot");
   }, 600_000);
-  afterAll(() => stop?.());
+  afterAll(() => stop?.(), 30_000);
 
   it("worst case through the sponsor: 8 revokes, 8 tombstones, 128 resets in one transaction", async () => {
     const r = await panicCli(["account", "panic"], {
