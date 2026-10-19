@@ -81,6 +81,9 @@ The sponsor handles one request per account at a time (`SPONSOR_BUSY` otherwise)
 worst-case fee before it submits, and settles at the fee the receipt shows, reverted transactions
 included.
 
+One sponsor submits from a database at a time: a second `sponsor serve` on the same `database`
+refuses to start. `sponsor relayer status|bump|cancel` still work beside the running sponsor.
+
 ### Embedded mode
 
 For tests and local demos the CLI can run the same sponsor in its own process instead:
@@ -89,6 +92,9 @@ For tests and local demos the CLI can run the same sponsor in its own process in
 starts it, allowlisting the profile's account, with its ledger in
 `$MANTLE_AA_HOME/embedded-sponsor.sqlite`, and stops it before exiting. Its caps are fixed
 (`packages/sponsor/src/embedded.ts`: 0.5 MNT per request, 5 MNT per day, 10 M gas per account).
+One embedded sponsor runs per `MANTLE_AA_HOME` at a time: a submitting command started while
+another command's embedded sponsor runs exits 1 before sending anything. Run them one after
+another, or give each its own home.
 
 ### A stuck relayer transaction
 

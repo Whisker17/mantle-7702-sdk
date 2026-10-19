@@ -126,8 +126,12 @@ const zero = (): Record<BudgetClass, Usage> => ({
  */
 export class SponsorStore {
   readonly #db: DatabaseSync;
+  readonly #path: string;
+  /** Held while this store is its database's submitting sponsor (`claimSubmitter`). */
+  #submitter: DatabaseSync | undefined;
 
   constructor(path: string) {
+    this.#path = path;
     this.#db = new DatabaseSync(path);
     this.#db.exec(`
       PRAGMA journal_mode = WAL;
@@ -173,6 +177,30 @@ export class SponsorStore {
     if (!columns.some((c) => c.name === "paymaster")) {
       this.#db.exec("ALTER TABLE ledger ADD COLUMN paymaster TEXT");
     }
+  }
+
+  /**
+   * Makes this store its database's one submitting sponsor until `close`, or throws while another
+   * running sponsor is: start-up releases what was left reserved, and nonces come from the
+   * database, which is only safe with no other sponsor submitting from it. The claim is an
+   * exclusive SQLite lock on `<database>.lock`, which the OS drops when its process exits, closed
+   * or crashed. Ledgers that are never started (`sponsor relayer status|bump|cancel`) and readers
+   * do not claim; an in-memory database is never shared.
+   */
+  claimSubmitter(): void {
+    if (this.#submitter || this.#path === ":memory:" || this.#path === "") return;
+    const lock = new DatabaseSync(`${this.#path}.lock`);
+    try {
+      lock.exec("BEGIN EXCLUSIVE");
+    } catch (error) {
+      lock.close();
+      // SQLITE_BUSY: another connection, in this process or another, holds the lock.
+      if ((error as { errcode?: number }).errcode !== 5) throw error;
+      throw new Error(
+        `the sponsor database ${this.#path} is in use by another running sponsor; one sponsor submits from a database at a time: retry once it has stopped`,
+      );
+    }
+    this.#submitter = lock;
   }
 
   /** Runs `fn` in one write transaction (`BEGIN IMMEDIATE`), rolled back if it throws; nests. */
@@ -343,5 +371,7 @@ export class SponsorStore {
 
   close(): void {
     this.#db.close();
+    this.#submitter?.close();
+    this.#submitter = undefined;
   }
 }
