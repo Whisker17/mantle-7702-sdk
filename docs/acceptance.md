@@ -8,7 +8,9 @@ bundler path, plus the MNT value case and panic. Script: `e2e/sepolia.ts` (how t
   `https://rpc.sepolia.mantle.xyz`.
 - **Commit the script ran from:** `9ae7e1e` ("test(e2e): add the Mantle Sepolia acceptance
   script"), with a clean tree (`git status` of `e2e/`, `packages/` and `deployments/` empty, as
-  the script records). This file was added afterwards; the script has not changed since.
+  the script records). This file was added afterwards; since then the script and the bundler stack
+  it starts (`e2e/bundler/sepolia.sh`, `trace-proxy.mjs`) changed only to redact RPC URLs from
+  their output, logs and errors.
 - **Command:** one invocation per phase group, each detached: `relayer`, then `bundler`, then
   `value panic`.
 
