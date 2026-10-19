@@ -11,8 +11,8 @@ import {
   RuleKind,
   readProfiles,
   SELECTORS,
-} from "@mantle-aa/sdk";
-import { relayerFeeBound } from "@mantle-aa/sponsor";
+} from "@0xwh1sker/mantle-aa-sdk";
+import { relayerFeeBound } from "@0xwh1sker/mantle-aa-sponsor";
 import {
   type Address,
   concat,

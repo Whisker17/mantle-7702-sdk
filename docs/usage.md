@@ -153,11 +153,11 @@ Why the stack looks like this, and what was measured: `docs/infra.md` §10.
 
 ## The SDK from TypeScript
 
-The CLI is a thin layer over `@mantle-aa/sdk`: `MantleAccount` for the root, `AgentSession` for
-an agent, and an `Executor` for the path (`RelayerExecutor` or `BundlerExecutor`). Errors are
-the classes the exit codes map to (`PolicyViolationError`, `LimitExceededError`,
-`InventoryExceededError`, `KeyExpiredError`, `DeadlineOutOfRangeError`, `SponsorRejectedError`,
-`SponsorBusyError`, `ExecutionRevertedError`), each with structured fields.
+The CLI is a thin layer over `@0xwh1sker/mantle-aa-sdk`: `MantleAccount` for the root,
+`AgentSession` for an agent, and an `Executor` for the path (`RelayerExecutor` or
+`BundlerExecutor`). Errors are the classes the exit codes map to (`PolicyViolationError`,
+`LimitExceededError`, `InventoryExceededError`, `KeyExpiredError`, `DeadlineOutOfRangeError`,
+`SponsorRejectedError`, `SponsorBusyError`, `ExecutionRevertedError`), each with structured fields.
 
 ```ts
 import {
@@ -171,7 +171,7 @@ import {
   PrivateKeySigner,
   RelayerExecutor,
   RuleKind,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import { createPublicClient, encodeFunctionData, erc20Abi, type Hex, http, parseAbi } from "viem";
 
 const addresses = loadDeployments(); // the committed Mantle Sepolia address book
@@ -233,14 +233,15 @@ console.log(await account.status());
 ```
 
 `agent.simulate(calls)` runs the same checks without submitting. For the bundler path, use
-`new BundlerExecutor({ client, bundlerUrl, sponsorUrl })`. `@mantle-aa/sponsor` exports the
-sponsor itself (`loadConfig`, `startSponsor`, `startEmbeddedSponsor`) for running it in process.
-The signatures are in `packages/sdk/src/` (`docs/DESIGN.md` §5.1 is the design).
+`new BundlerExecutor({ client, bundlerUrl, sponsorUrl })`. `@0xwh1sker/mantle-aa-sponsor` exports
+the sponsor itself (`loadConfig`, `startSponsor`, `startEmbeddedSponsor`) for running it in
+process. The signatures are in `packages/sdk/src/` (`docs/DESIGN.md` §5.1 is the design).
 
 ## Consuming the packages
 
-`@mantle-aa/sdk`, `@mantle-aa/sponsor` and `@mantle-aa/cli` are private and not published. Use
-them from a clone of this repository, built, through pnpm `link:` dependencies:
+`@0xwh1sker/mantle-aa-sdk`, `@0xwh1sker/mantle-aa-sponsor` and `@0xwh1sker/mantle-aa-cli` are
+private and not published. Use them from a clone of this repository, built, through pnpm `link:`
+dependencies:
 
 ```bash
 git clone git@github.com:Whisker17/mantle-7702-sdk.git ../mantle-7702-sdk   # or check out a tag
@@ -260,9 +261,9 @@ Two forms do not work with this repository, so do not use them:
   installs the package's sources without `dist/` (nothing builds it), so importing it fails with
   `ERR_MODULE_NOT_FOUND`.
 - **A `file:` dependency** copies the package out of the clone: the SDK then cannot find
-  `deployments/mantle-sepolia.json` (pass `loadDeployments(<path>)` everywhere to work around
-  it), and `@mantle-aa/sponsor` does not install at all, because its `workspace:*` dependency on
-  the SDK resolves only inside this workspace.
+  `deployments/mantle-sepolia.json` (pass `loadDeployments(<path>)` everywhere to work around it),
+  and `@0xwh1sker/mantle-aa-sponsor` does not install at all, because its `workspace:*` dependency
+  on the SDK resolves only inside this workspace.
 
 ## For launchpad builders
 

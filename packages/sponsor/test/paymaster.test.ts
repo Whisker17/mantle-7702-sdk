@@ -21,7 +21,7 @@ import {
   SponsorRejectCode,
   secp256k1KeyHash,
   signPaymasterRequest,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import {
   type Address,
   createClient,

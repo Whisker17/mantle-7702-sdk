@@ -65,7 +65,7 @@ import {
   type Signer,
   SponsorRejectedError,
   signBatchedCall,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import {
   type Address,
   BaseError,

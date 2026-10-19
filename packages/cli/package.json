@@ -1,5 +1,5 @@
 {
-  "name": "@mantle-aa/cli",
+  "name": "@0xwh1sker/mantle-aa-cli",
   "version": "0.1.3",
   "private": true,
   "type": "module",
@@ -16,8 +16,8 @@
     "mantle-aa": "./dist/bin.js"
   },
   "dependencies": {
-    "@mantle-aa/sdk": "workspace:*",
-    "@mantle-aa/sponsor": "workspace:*",
+    "@0xwh1sker/mantle-aa-sdk": "workspace:*",
+    "@0xwh1sker/mantle-aa-sponsor": "workspace:*",
     "viem": "2.57.7"
   }
 }

@@ -24,7 +24,7 @@ import {
   saveKey,
   saveProfile,
   UndelegationFailedError,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import {
   EMBEDDED_PAYMASTER_SIGNER_KEY_ENV,
   EMBEDDED_SWITCH_ENV,
@@ -35,7 +35,7 @@ import {
   SponsorStore,
   startEmbeddedSponsor,
   startSponsor,
-} from "@mantle-aa/sponsor";
+} from "@0xwh1sker/mantle-aa-sponsor";
 import {
   type Address,
   BaseError,

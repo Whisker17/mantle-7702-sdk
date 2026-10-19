@@ -3,7 +3,7 @@ import { getChain, PACKAGE_NAME } from "../src/index.js";
 
 describe("chains", () => {
   it("exposes its entry point", () => {
-    expect(PACKAGE_NAME).toBe("@mantle-aa/sdk");
+    expect(PACKAGE_NAME).toBe("@0xwh1sker/mantle-aa-sdk");
   });
 
   it("configures Mantle Sepolia", () => {

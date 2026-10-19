@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { readProfiles, saveProfile } from "@mantle-aa/sdk";
+import { readProfiles, saveProfile } from "@0xwh1sker/mantle-aa-sdk";
 import { privateKeyToAddress } from "viem/accounts";
 import { beforeEach, describe, expect, it } from "vitest";
 import { cli, normalize, PASSWORD, tempHome, testEnv } from "./helpers.js";

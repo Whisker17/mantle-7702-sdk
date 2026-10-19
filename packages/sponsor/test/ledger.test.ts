@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SponsorRejectCode } from "@mantle-aa/sdk";
+import { SponsorRejectCode } from "@0xwh1sker/mantle-aa-sdk";
 import { type Address, type Hex, pad, parseEther, toHex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";

@@ -1,4 +1,4 @@
-export const PACKAGE_NAME = "@mantle-aa/sponsor";
+export const PACKAGE_NAME = "@0xwh1sker/mantle-aa-sponsor";
 
 export * from "./auth.js";
 export * from "./config.js";
