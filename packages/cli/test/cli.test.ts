@@ -91,6 +91,7 @@ describe("chain commands before any chain access", () => {
     ["account init", ["account", "init"]],
     ["account status", ["account", "status"]],
     ["account exec", ["account", "exec", "--calls", calls]],
+    ["account panic", ["account", "panic", "--self-pay", "--undelegate"]],
     ["session grant", ["session", "grant", "--agent", "a", "--policy", "policy.json"]],
     ["session list", ["session", "list"]],
   ])("%s: no RPC URL", async (_, args) => {
@@ -126,8 +127,8 @@ describe("chain commands before any chain access", () => {
     ).toMatchSnapshot();
   });
 
-  it("account panic: not available in this version", async () => {
-    expect(await snap(["account", "panic", "--self-pay"])).toMatchSnapshot();
+  it("account panic: --undelegate needs --self-pay", async () => {
+    expect(await snap(["account", "panic", "--undelegate"])).toMatchSnapshot();
   });
 
   it.each([

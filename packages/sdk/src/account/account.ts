@@ -17,6 +17,7 @@ import { generatePrivateKey } from "viem/accounts";
 import { getChainId, getCode, getTransactionCount, readContract } from "viem/actions";
 import { type AddressBook, loadDeployments } from "../deployments.js";
 import { delegationDesignator } from "../domain.js";
+import { ExecutionRevertedError } from "../errors.js";
 import {
   type KeystoreOptions,
   readProfiles,
@@ -27,6 +28,14 @@ import {
 import { PrivateKeySigner, type Signer } from "../signer.js";
 import { agentPolicyHookAbi, caliburAbi, erc20Abi, launchpadAbi } from "./abi.js";
 import { type Call, type Executor, ROOT_KEY_HASH } from "./executor.js";
+import {
+  type PanicOptions,
+  type PanicResult,
+  selfExecuteData,
+  sendSelf,
+  sendUndelegation,
+  UndelegationFailedError,
+} from "./panic.js";
 import {
   type AllowancePair,
   allowancePairs,
@@ -255,20 +264,61 @@ export class MantleAccount {
   async revokeSession(keyHash: Hex): Promise<{ hash: Hex; resetAllowances: AllowancePair[] }> {
     if (BigInt(keyHash) === 0n) throw new Error("The root key cannot be revoked");
     if ((await this.state()) === "UNDELEGATED") throw new Error("The account is not delegated");
-    const [info] = await this.#sessions([keyHash], []);
-    const reset = info?.policy ? allowancePairs(info.policy) : [];
-    const calls = [
-      call(
-        this.addresses.agentPolicyHook,
-        encodeFunctionData({ abi: agentPolicyHookAbi, functionName: "revoke", args: [keyHash] }),
-      ),
-      ...reset.map(approveZero),
-    ];
-    if (info?.registered) {
-      const data = encodeFunctionData({ abi: caliburAbi, functionName: "revoke", args: [keyHash] });
-      calls.unshift(call(this.address, data));
+    const { calls, resetAllowances } = this.#revocation(await this.#sessions([keyHash], []));
+    return { hash: await this.#submit(calls), resetAllowances };
+  }
+
+  /**
+   * The emergency stop (docs/DESIGN.md §7.3). Phase 1, one transaction: every non-root key that is
+   * registered on Calibur or active on the hook is revoked on both, and every allowance their
+   * policies allowed is reset (each pair once). Inventory is not released: the revoked keys'
+   * positions stay frozen until the root releases them. It goes through the executor (the
+   * sponsor) unless `selfPay`. Phase 2 (`undelegate`, needs `selfPay`) starts only after phase 1's
+   * receipt is confirmed successful; its failure throws `UndelegationFailedError`, which carries
+   * the confirmed phase 1.
+   */
+  async panic(options: PanicOptions = {}): Promise<PanicResult> {
+    if (options.undelegate && !options.selfPay) {
+      throw new Error("Undelegation is sent by the root itself: it needs selfPay");
     }
-    return { hash: await this.#submit(calls), resetAllowances: reset };
+    if ((await this.state()) === "UNDELEGATED") throw new Error("The account is not delegated");
+    const sessions = (await this.listSessions({ tokens: [] })).filter(
+      (s) => s.registered || s.summary.active,
+    );
+    const { calls, resetAllowances } = this.#revocation(sessions);
+    let hash: Hex | null = null;
+    if (calls.length && options.selfPay) {
+      const result = await sendSelf(this.#client, this.#root, { data: selfExecuteData(calls) });
+      if (!result.success) {
+        throw new ExecutionRevertedError({
+          reason: `revocation transaction ${result.hash} reverted`,
+        });
+      }
+      hash = result.hash;
+    } else if (calls.length) {
+      hash = await this.#submit(calls);
+    }
+    const revocation: PanicResult["revocation"] = {
+      status: hash ? "confirmed" : "nothing-to-revoke",
+      hash,
+      revokedKeys: sessions.map((s) => s.keyHash),
+      resetAllowances,
+    };
+    if (!options.undelegate) return { revocation, undelegation: null };
+
+    try {
+      const result = await sendUndelegation(this.#client, this.#root, this.addresses.chainId);
+      if (!result.success) {
+        throw new ExecutionRevertedError({ reason: `transaction ${result.hash} reverted` });
+      }
+      // An authorization that does not apply is skipped, and its transaction still succeeds.
+      if ((await this.state()) !== "UNDELEGATED") {
+        throw new Error(`transaction ${result.hash} left the account delegated`);
+      }
+      return { revocation, undelegation: { status: "confirmed", hash: result.hash } };
+    } catch (error) {
+      throw new UndelegationFailedError(revocation, error);
+    }
   }
 
   /**
@@ -386,6 +436,34 @@ export class MantleAccount {
   }
 
   // ---- internals ------------------------------------------------------------------------------
+
+  /**
+   * One batch revoking `sessions`: Calibur `revoke` of each registered key, the hook tombstone of
+   * each key, and `approve(spender, 0)` once per allowance pair their policies allow.
+   */
+  #revocation(sessions: readonly SessionInfo[]): {
+    calls: Call[];
+    resetAllowances: AllowancePair[];
+  } {
+    const pairs = sessions.flatMap((s) => (s.policy ? allowancePairs(s.policy) : []));
+    const resetAllowances = [...new Map(pairs.map((p) => [`${p.token}:${p.spender}`, p])).values()];
+    const hookRevoke = (keyHash: Hex) =>
+      call(
+        this.addresses.agentPolicyHook,
+        encodeFunctionData({ abi: agentPolicyHookAbi, functionName: "revoke", args: [keyHash] }),
+      );
+    const caliburRevoke = (keyHash: Hex) =>
+      call(
+        this.address,
+        encodeFunctionData({ abi: caliburAbi, functionName: "revoke", args: [keyHash] }),
+      );
+    const calls = [
+      ...sessions.filter((s) => s.registered).map((s) => caliburRevoke(s.keyHash)),
+      ...sessions.map((s) => hookRevoke(s.keyHash)),
+      ...resetAllowances.map(approveZero),
+    ];
+    return { calls, resetAllowances };
+  }
 
   async #submit(calls: readonly Call[], authorization?: SignedAuthorization): Promise<Hex> {
     const result = await this.#executor.submit({
