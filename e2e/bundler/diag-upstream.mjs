@@ -21,14 +21,18 @@ createServer(async (req, res) => {
     text = JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -1, message: String(e) } });
   }
   let methods = "?";
+  let key = "";
   let code;
   try {
     const j = JSON.parse(body);
     methods = (Array.isArray(j) ? j : [j]).map((x) => x.method).join(",");
+    key = (Array.isArray(j) ? j : [j])
+      .map((x) => `${x.method}${JSON.stringify(x.params)}`)
+      .join(",");
     const r = JSON.parse(text);
     code = (Array.isArray(r) ? r : [r]).find((x) => x.error)?.error?.code;
   } catch {}
-  console.log(JSON.stringify({ t, ms: Date.now() - t, status, methods, code }));
+  console.log(JSON.stringify({ t, ms: Date.now() - t, status, methods, key, code }));
   res.writeHead(status || 502, { "content-type": "application/json" });
   res.end(text);
 }).listen(0, "127.0.0.1", function () {

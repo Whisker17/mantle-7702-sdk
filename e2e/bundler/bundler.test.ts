@@ -32,6 +32,7 @@ describe.skipIf(!rpcUrl)("strict-mode Alto on a Mantle Sepolia fork", () => {
 
   it("lands a sponsored root init UserOp with eip7702Auth as a type-4 bundle", async () => {
     const { client, bundler } = stack;
+    const sent = Date.now();
     const result = await sendSponsoredUserOp({
       client,
       bundlerUrl: bundler.url,
@@ -51,16 +52,16 @@ describe.skipIf(!rpcUrl)("strict-mode Alto on a Mantle Sepolia fork", () => {
       ],
       paymaster: book.verifyingPaymaster,
       paymasterSigner,
-      logs: () => bundler.logs().slice(-4_000),
+      logs: () => bundler.timeline(sent),
     });
 
     // Accepted through safe-mode validation: Alto traced it with its ERC-7562 collector.
-    expect(bundler.logs()).toContain("tracerResult");
+    await bundler.traced(root.address, sent);
     expect(result.success).toBe(true);
     expect(result.paymaster.toLowerCase()).toBe(book.verifyingPaymaster.toLowerCase());
     const tx = await client.getTransaction({ hash: result.receipt.transactionHash });
     expect(tx.type).toBe("eip7702");
-    expect(tx.from.toLowerCase()).toBe(bundler.executor.toLowerCase());
+    expect(bundler.executors).toContain(tx.from.toLowerCase());
     expect(await client.getCode({ address: root.address })).toBe(
       concat(["0xef0100", book.caliburEntry]).toLowerCase(),
     );

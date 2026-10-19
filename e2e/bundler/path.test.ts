@@ -80,7 +80,6 @@ import {
   testEnv,
 } from "../../packages/cli/test/helpers.js";
 import {
-  altoBrief,
   type BundlerStack,
   setPaymasterSigner,
   startBundlerStack,
@@ -192,32 +191,6 @@ function revertData(error: unknown): Hex {
   return data;
 }
 
-/** `HH:MM:SS.mmm` in local time, as Alto's log stamps its entries. */
-const clock = (ms: number) =>
-  `${new Date(ms).toTimeString().slice(0, 8)}.${String(ms % 1000).padStart(3, "0")}`;
-
-/**
- * Alto's log entries since `since`, without its head polling, each distinct entry once (at its
- * first time, with how often it recurred); a long one keeps its start and its end (a trace ends
- * with the revert that carries the reason).
- */
-function altoLog(log: string, since: number): string {
-  const from = clock(since);
-  const seen = new Map<string, { text: string; count: number }>();
-  for (const entry of log.split(/\n(?=\[\d\d:\d\d:\d\d\.\d{3}\])/)) {
-    if (entry.slice(1, 13) < from || /"eth_(getBlockByNumber|blockNumber)"/.test(entry)) continue;
-    const text = entry.length > 1_200 ? `${entry.slice(0, 300)} … ${entry.slice(-900)}` : entry;
-    const key = text.slice(15);
-    const known = seen.get(key);
-    if (known) known.count++;
-    else seen.set(key, { text, count: 1 });
-  }
-  return [...seen.values()]
-    .map(({ text, count }) => (count > 1 ? `${text}\n  (×${count})` : text))
-    .join("\n")
-    .slice(0, 60_000);
-}
-
 /** Polls `check` every 200 ms until it holds; fails after `ms`. */
 async function until(check: () => boolean, ms: number, what: string) {
   const deadline = Date.now() + ms;
@@ -268,10 +241,17 @@ function bundlerRun(mode: Mode) {
   const attacker = () =>
     createWalletClient({ account: ATTACKER, chain: mantleSepolia, transport: http(stack.rpcUrl) });
   const now = async () => (await client.getBlock()).timestamp;
-  /** A transaction's receipt; polled every 250 ms (viem's default is 4 s; a block comes each second). */
+  /** A transaction's receipt; polled every 250 ms (viem's default is 4 s). */
   const mined = (hash: Hex) =>
     client.waitForTransactionReceipt({ hash, timeout: 30_000, pollingInterval: 250 });
-  const bundleTxs = () => client.getTransactionCount({ address: stack.bundler.executor });
+  /** Bundles Alto has sent so far, from any of its executors. */
+  const bundleTxs = async () => {
+    let count = 0;
+    for (const address of stack.bundler.executors) {
+      count += await client.getTransactionCount({ address });
+    }
+    return count;
+  };
   const epNonce = (key: bigint) =>
     client.readContract({
       address: EP,
@@ -342,40 +322,42 @@ function bundlerRun(mode: Mode) {
 
   // ---- the CLI ----
 
+  /** When the last CLI step started (the UserOp it sent was validated after it). */
+  let stepStarted = 0;
+
   /** Runs a CLI step (submitting through the bundler), checks its exit code and that it leaks nothing. */
   async function s(args: string[], code: number): Promise<CliResult> {
     const started = Date.now();
+    stepStarted = started;
     const result = await cli(args[0] === "keys" ? args : [...args, "--via", "bundler"], env);
     const took = Date.now() - started;
     console.log(
       `[diag-step] ${mode} ${args.slice(0, 3).join(" ")} ${took}ms ${upstreamSummary(stack.upstream, started)}`,
     );
-    if (took > 15_000) {
-      console.log(
-        `[diag-slow] alto since ${clock(started)}:\n${altoBrief(stack.bundler.logs(), started)}`,
-      );
-    }
+    if (took > 15_000) console.log(`[diag-slow] alto:\n${stack.bundler.timeline(started)}`);
     const output = result.stdout + result.stderr;
     expect(output).not.toMatch(/127\.0\.0\.1/);
     for (const secret of [PASSWORD, signerKey, relayerKey, checkRelayerKey]) {
       expect(output).not.toContain(secret.replace(/^0x/, ""));
     }
-    // On a mismatch, Alto's recent log (without its block polling) shows what it did with the op.
+    // On a mismatch, Alto's log since the step started shows what it did with the op.
     const alto = () =>
-      result.code === code ? "" : `\n--- alto ---\n${altoLog(stack.bundler.logs(), started)}`;
+      result.code === code ? "" : `\n--- alto ---\n${stack.bundler.timeline(started)}`;
     expect(result.code, `${args.join(" ")}: ${result.stdout}${alto()}`).toBe(code);
     expect(result.json.ok).toBe(code === 0);
     return result;
   }
 
   /**
-   * The bundle a successful CLI step names: sent by Alto's executor to the EntryPoint, carrying one
-   * UserOp of the account that succeeded, sponsored by the deployed VerifyingPaymaster.
+   * The bundle a successful CLI step names: sent by one of Alto's executors to the EntryPoint,
+   * carrying one UserOp of the account that succeeded, sponsored by the deployed VerifyingPaymaster,
+   * after Alto validated it in safe mode (its ERC-7562 collector traced a UserOp of the account
+   * since the step started).
    */
   async function landed(r: CliResult, type?: "eip7702") {
     const hash = r.json.result.hash as Hex;
     const tx = await client.getTransaction({ hash });
-    expect(tx.from.toLowerCase()).toBe(stack.bundler.executor.toLowerCase());
+    expect(stack.bundler.executors).toContain(tx.from.toLowerCase());
     expect(tx.to?.toLowerCase()).toBe(EP.toLowerCase());
     if (type) expect(tx.type).toBe(type);
     else expect(tx.type).not.toBe("eip7702");
@@ -388,6 +370,7 @@ function bundlerRun(mode: Mode) {
     });
     expect(events).toHaveLength(1);
     expect(events[0]?.args).toMatchObject({ sender: account, paymaster: PAYMASTER, success: true });
+    await stack.bundler.traced(account, stepStarted);
   }
 
   /** `agent exec` refuses with `code`; nothing reaches the bundler or the chain. */
@@ -597,14 +580,6 @@ function bundlerRun(mode: Mode) {
       `[diag-setup] ${mode} stack ${Date.now() - t0}ms ${upstreamSummary(stack.upstream, t0)}`,
     );
     client = stack.client;
-    // Interval mining, a block every second, as on a live chain: Alto is built for a chain that
-    // keeps producing blocks. On an automining fork it stalls: it frees its one executor wallet
-    // only when a new block shows its bundle included, so on a quiet chain the next
-    // eth_sendUserOperation can wait for that wallet without bound (measured: 30 s while a bundle
-    // sat unmined, answered within 1 s of the next block); and its bundle transaction is mined
-    // inside eth_sendRawTransaction, which on a slow runner outlasted its 10 s RPC bound three
-    // times, after which it kept re-validating the op without dropping it.
-    await client.setIntervalMining({ interval: 1 });
     await setPaymasterSigner(client, PAYMASTER, paymasterSigner.address);
     // Warm the fresh fork and Alto with a throwaway root init UserOp, as the smoke test lands one.
     // The first UserOp on a fork fetches its state from the upstream RPC: on a slow runner that
@@ -626,7 +601,7 @@ function bundlerRun(mode: Mode) {
       paymaster: PAYMASTER,
       paymasterSigner,
       sendAttempts: 3,
-      logs: () => altoLog(stack.bundler.logs(), warming),
+      logs: () => stack.bundler.timeline(warming),
     });
     expect(warmed.success).toBe(true);
     env.MANTLE_AA_RPC_URL = stack.rpcUrl;
@@ -767,9 +742,8 @@ function bundlerRun(mode: Mode) {
         0,
       );
       expect(r.json.result.success).toBe(true);
+      // Accepted through safe-mode validation: `landed` waits for Alto's ERC-7562 trace of it.
       await landed(r);
-      // Accepted through safe-mode validation: Alto traced it with its ERC-7562 collector.
-      expect(stack.bundler.logs()).toContain("tracerResult");
       expect(await epNonce(laneOf(keyHash))).toBe((laneOf(keyHash) << 64n) | 1n);
       expect(await balanceOf(USD)).toBe(usd(190));
       expect(await balanceOf(MEME)).toBe(HUMAN_MEME + 10n * UNIT);

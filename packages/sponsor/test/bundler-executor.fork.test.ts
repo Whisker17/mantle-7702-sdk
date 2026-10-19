@@ -119,7 +119,7 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
   /** The bundle's one UserOperationEvent: sponsored by the deployed paymaster, sent by Alto. */
   const userOpEvent = async (hash: Hex) => {
     const receipt = await stack.client.getTransactionReceipt({ hash });
-    expect(receipt.from.toLowerCase()).toBe(stack.bundler.executor.toLowerCase());
+    expect(stack.bundler.executors).toContain(receipt.from.toLowerCase());
     const events = parseEventLogs({
       abi: entryPoint08Abi,
       eventName: "UserOperationEvent",
@@ -136,18 +136,9 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
 
   it("initialises an undelegated account (root init UserOp with eip7702Auth, first grant) through the bundler", async () => {
     expect(await account.state()).toBe("UNDELEGATED");
-    const t0 = Date.now();
+    const sent = Date.now();
     const result = await account.init({ grant: { policy, agentName: "agent" } });
-    console.log(`[diag-step] init ${Date.now() - t0}ms ${upstreamSummary(stack.upstream, t0)}`);
-    const traced = stack.bundler.logs().includes("tracerResult");
-    console.log(`[diag-trace] tracerResult in log at receipt: ${traced}`);
-    if (!traced) {
-      const waited = Date.now();
-      while (!stack.bundler.logs().includes("tracerResult") && Date.now() - waited < 10_000) {
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      console.log(`[diag-trace] tracerResult after ${Date.now() - waited}ms`);
-    }
+    console.log(`[diag-step] init ${Date.now() - sent}ms ${upstreamSummary(stack.upstream, sent)}`);
 
     expect(result.state).toBe("INITIALIZED");
     const hash = result.hash as Hex;
@@ -158,7 +149,9 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
     expect(event).toMatchObject({ sender: root.address, paymaster: PM, success: true, nonce: 0n });
     initCost = event.actualGasCost;
     // Accepted through safe-mode validation: Alto traced it with its ERC-7562 collector.
-    expect(stack.bundler.logs()).toContain("tracerResult");
+    const waited = Date.now();
+    await stack.bundler.traced(root.address, sent);
+    console.log(`[diag-trace] init trace found after ${Date.now() - waited}ms`);
     expect((await stack.client.getCode({ address: root.address }))?.toLowerCase()).toBe(
       delegationDesignator(book.caliburEntry),
     );
@@ -196,9 +189,12 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
     });
     const lane = BigInt(keyHash) >> 64n;
 
+    const sent = Date.now();
     const result = await agent.exec([approve(123n)], { via: "bundler" });
 
     expect(result.success).toBe(true);
+    // Accepted through safe-mode validation, as the init.
+    await stack.bundler.traced(root.address, sent);
     const tx = await stack.client.getTransaction({ hash: result.hash });
     expect(tx.type).not.toBe("eip7702");
     expect(await userOpEvent(result.hash)).toMatchObject({

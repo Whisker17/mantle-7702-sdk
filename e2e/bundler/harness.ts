@@ -24,6 +24,8 @@ import {
   parseEther,
   publicActions,
   type TestClient,
+  toHex,
+  zeroHash,
 } from "viem";
 import { generatePrivateKey, privateKeyToAddress } from "viem/accounts";
 import { ENTRY_POINT_V08 } from "./userop.js";
@@ -50,6 +52,9 @@ const SIMULATION_CONTRACTS = [
   "--entrypoint-simulation-contract-v9",
   "0xC53c61c137986366E676B6F2A854947E8fF9e472",
 ];
+
+/** Attempts at starting anvil when it exits during the start. */
+const FORK_ATTEMPTS = 3;
 
 /** A started process the harness owns; `stop` is idempotent. */
 interface Owned {
@@ -134,7 +139,10 @@ async function waitForRpc(url: string, child: ChildProcess, timeoutMs: number, w
   throw new Error(`${what} did not answer on ${url} within ${timeoutMs} ms`);
 }
 
-/** Spawns `cmd`, keeps its output for diagnostics, and kills it on stop and on process exit. */
+/**
+ * Spawns `cmd`, keeps the tail of its output for diagnostics (or hands each stdout line to
+ * `onLine`), and kills it on stop and on process exit.
+ */
 function own(
   cmd: string,
   args: string[],
@@ -147,7 +155,7 @@ function own(
   });
   let output = "";
   const keep = (data: Buffer) => {
-    output = (output + data.toString()).slice(-4_000_000);
+    output = (output + data.toString()).slice(-100_000);
   };
   let partial = "";
   child.stdout?.on(
@@ -190,6 +198,7 @@ export interface UpstreamCall {
   ms: number;
   status: number;
   methods: string;
+  key: string;
   code?: number;
 }
 
@@ -205,42 +214,21 @@ export function upstreamSummary(calls: UpstreamCall[], since: number, until = Da
     statuses[k] = (statuses[k] ?? 0) + 1;
     methods[c.methods] = (methods[c.methods] ?? 0) + 1;
   }
-  return `upstream n=${window.length} sum=${sum}ms max=${max}ms avg=${window.length ? Math.round(sum / window.length) : 0}ms statuses=${JSON.stringify(statuses)} methods=${JSON.stringify(methods)}`;
-}
-
-/** `HH:MM:SS.mmm` in local time, as Alto's log stamps its entries. */
-const clock = (ms: number) =>
-  `${new Date(ms).toTimeString().slice(0, 8)}.${String(ms % 1000).padStart(3, "0")}`;
-
-/** DIAGNOSTIC: one line per Alto log entry since `since` (time, message, first RPC method). */
-export function altoBrief(log: string, since: number): string {
-  const from = clock(since);
-  const out: string[] = [];
-  let last = "";
-  let repeat = 0;
-  for (const entry of log.split(/\n(?=\[\d\d:\d\d:\d\d\.\d{3}\])/)) {
-    if (entry.slice(1, 13) < from || /"eth_(getBlockByNumber|blockNumber)"/.test(entry)) continue;
-    const head = (entry.split("\n")[0] ?? "").replace(
-      new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"),
-      "",
-    );
-    const method = entry.match(/"method": "(\w+)"/)?.[1] ?? "";
-    const message = entry.match(/"message": "([^"]{0,160})/)?.[1] ?? "";
-    const line = `${head} ${method} ${message}`.trim();
-    if (line.slice(15) === last) {
-      repeat++;
-      continue;
-    }
-    if (repeat) out.push(`  (×${repeat + 1})`);
-    repeat = 0;
-    last = line.slice(15);
-    out.push(line.slice(0, 300));
+  const seen = new Set(calls.filter((c) => c.t < since).map((c) => c.key));
+  let repeats = 0;
+  for (const c of window) {
+    if (seen.has(c.key)) repeats++;
+    seen.add(c.key);
   }
-  if (repeat) out.push(`  (×${repeat + 1})`);
-  return out.join("\n").slice(-30_000);
+  return `upstream n=${window.length} repeats=${repeats} sum=${sum}ms max=${max}ms avg=${window.length ? Math.round(sum / window.length) : 0}ms statuses=${JSON.stringify(statuses)} methods=${JSON.stringify(methods)}`;
 }
 
-/** Starts anvil forking `upstreamRpcUrl` at its head (Prague rules, so EIP-7702 applies). */
+/**
+ * Starts anvil forking `upstreamRpcUrl` at its head (Prague rules, so EIP-7702 applies). It mines a
+ * block for every transaction and, like a live chain, one every second besides (mixed mining):
+ * Alto, and viem's receipt waits, notice an inclusion only on a later block, which a purely
+ * automining fork never mines once the suite stops sending (docs/infra.md §10.6).
+ */
 export async function startFork(upstreamRpcUrl: string, timeoutMs = 60_000): Promise<Fork> {
   const upstream: UpstreamCall[] = [];
   let listening: (port: number) => void = () => undefined;
@@ -257,57 +245,141 @@ export async function startFork(upstreamRpcUrl: string, timeoutMs = 60_000): Pro
     },
   );
   const via = `http://127.0.0.1:${await Promise.race([proxyPort, sleep(10_000, 0)])}`;
-  const port = await freePort();
-  const anvil = own("anvil", [
-    "--fork-url",
-    via,
-    "--port",
-    String(port),
-    "--hardfork",
-    "prague",
-    "--silent",
-  ]);
-  const url = `http://127.0.0.1:${port}`;
-  const stop = async () => {
-    await anvil.stop();
-    await proxy.stop();
-  };
-  try {
-    await waitForRpc(url, anvil.child, timeoutMs, "anvil");
-  } catch (e) {
-    await stop();
-    throw e;
+  for (let attempt = 1; ; attempt++) {
+    const port = await freePort();
+    const anvil = own("anvil", [
+      "--fork-url",
+      via,
+      "--port",
+      String(port),
+      "--hardfork",
+      "prague",
+      "--block-time",
+      "1",
+      "--mixed-mining",
+      "--silent",
+    ]);
+    const url = `http://127.0.0.1:${port}`;
+    try {
+      await waitForRpc(url, anvil.child, timeoutMs, "anvil");
+      const stop = async () => {
+        await anvil.stop();
+        await proxy.stop();
+      };
+      return { url, upstream, stop };
+    } catch (e) {
+      await anvil.stop();
+      const message = `${(e as Error).message}: ${anvil
+        .output()
+        .replace(/\w+:\/\/[^\s)]+/g, "<url>")
+        .slice(-1_000)}`;
+      // anvil exits when the upstream RPC fails while it builds the fork (HTTP 429 under parallel
+      // suites, measured), so an exited start is retried, as packages/sdk/test/account/fork.ts does.
+      if (attempt === FORK_ATTEMPTS || !message.startsWith("anvil exited")) {
+        await proxy.stop();
+        throw new Error(`${message} (${attempt} attempts)`);
+      }
+      await sleep(1_000 * attempt);
+    }
   }
-  return { url, upstream, stop };
 }
 
 export interface Bundler extends Owned {
   /** The bundler's JSON-RPC URL (ERC-7769 `eth_*UserOperation*` and `pimlico_*`). */
   url: string;
   entryPoint: Address;
-  /** The executor (bundle sender) address; its key never leaves the harness. */
-  executor: Address;
-  /** Alto's recent log output, for failure messages. */
-  logs: () => string;
+  /** The executor (bundle sender) addresses, lowercase; their keys never leave the harness. */
+  executors: Address[];
+  /**
+   * Alto's log since `since` (ms since the epoch; default: all), one line per entry, without its
+   * block polling; an entry that recurs is shown once, at its first time, with its count.
+   */
+  timeline: (since?: number) => string;
+  /**
+   * Resolves once Alto has logged the ERC-7562 tracer result of a safe-mode validation of a
+   * UserOp of `sender` at or after `since` (ms since the epoch); rejects after `timeoutMs` with
+   * the timeline. Alto logs it for every validation it traces, before it answers.
+   */
+  traced: (sender: Address, since: number, timeoutMs?: number) => Promise<void>;
 }
 
 export interface AltoOptions {
   /** RPC Alto reads, traces (`debug_traceCall`) and submits through: an anvil fork in tests. */
   rpcUrl: string;
-  /** Executor and utility key; passed to Alto through its environment, never argv. */
-  executorKey: Hex;
+  /** Executor keys (the first is also the utility key); passed through Alto's environment, never argv. */
+  executorKeys: Hex[];
   /** How long to wait for Alto to answer (ms); the install has its own 300 s bound. */
   timeoutMs?: number;
+}
+
+/** `HH:MM:SS.mmm` in local time. */
+const clock = (ms: number) =>
+  `${new Date(ms).toTimeString().slice(0, 8)}.${String(ms % 1000).padStart(3, "0")}`;
+
+/** `validateUserOp(PackedUserOperation,bytes32,uint256)`: the account's frame in a validation trace. */
+const VALIDATE_USER_OP = "0x19822f7c";
+
+/** One Alto log entry (`--json`), reduced to a line of text; `traced` lists validated senders. */
+interface AltoEntry {
+  time: number;
+  text: string;
+  traced?: string[];
+}
+
+/** Parses one line of Alto's JSON log; block polling and unparsable lines give `undefined`. */
+function altoEntry(line: string): AltoEntry | undefined {
+  let e: Record<string, unknown>;
+  try {
+    e = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  const { time, level, msg, module, body, result, data, method, err, ...rest } = e as {
+    time: number;
+    level: string;
+    msg: string;
+    module?: string;
+    body?: { method?: string };
+    result?: unknown;
+    data?: { error?: unknown };
+    method?: string;
+    err?: { message?: string };
+  };
+  if (typeof time !== "number" || typeof msg !== "string") return undefined;
+  const rpc = body?.method ?? method;
+  if (/^eth_(blockNumber|getBlockByNumber)$/.test(rpc ?? "") && msg === "received response") {
+    return undefined;
+  }
+  if (msg.startsWith("tracerResult: ")) {
+    const trace = JSON.parse(msg.slice("tracerResult: ".length)) as {
+      callsFromEntryPoint?: { topLevelMethodSig?: string; topLevelTargetAddress?: string }[];
+    };
+    const traced = (trace.callsFromEntryPoint ?? [])
+      .filter((c) => c.topLevelMethodSig === VALIDATE_USER_OP)
+      .map((c) => String(c.topLevelTargetAddress).toLowerCase());
+    return {
+      time,
+      traced,
+      text: `${clock(time)} tracerResult (validation of ${traced.join(", ")})`,
+    };
+  }
+  const parts = [clock(time), level === "info" ? "" : level.toUpperCase(), msg, rpc ?? ""];
+  const error = (data as { error?: unknown } | undefined)?.error;
+  if (msg === "sent reply" && error) parts.push(JSON.stringify(error).slice(0, 600));
+  if (err?.message) parts.push(err.message.slice(0, 600));
+  if (Object.keys(rest).length) parts.push(JSON.stringify(rest).slice(0, 600));
+  return { time, text: parts.filter(Boolean).join(" ") };
 }
 
 /** Starts the pinned, patched Alto in safe mode against EntryPoint v0.8 on `rpcUrl`. */
 export async function startAlto({
   rpcUrl,
-  executorKey,
+  executorKeys,
   timeoutMs = 240_000,
 }: AltoOptions): Promise<Bundler> {
   const cli = await installAlto();
   const port = await freePort();
+  const entries: AltoEntry[] = [];
   const alto = own(
     process.execPath,
     [
@@ -329,24 +401,61 @@ export async function startAlto({
       "--deploy-simulations-contract",
       "false",
       ...SIMULATION_CONTRACTS,
-      // Info level includes every RPC request Alto makes, so a stall shows what it waited on.
+      // Info level includes every RPC request Alto makes, so a stall shows what it waited on. JSON
+      // lines are written synchronously, before the reply they precede, and parse without guessing.
       "--log-level",
       "info",
+      "--json",
     ],
-    { ALTO_EXECUTOR_PRIVATE_KEYS: executorKey, ALTO_UTILITY_PRIVATE_KEY: executorKey },
+    {
+      ALTO_EXECUTOR_PRIVATE_KEYS: executorKeys.join(","),
+      ALTO_UTILITY_PRIVATE_KEY: executorKeys[0],
+    },
+    (line) => {
+      const entry = altoEntry(line);
+      if (entry) entries.push(entry);
+    },
   );
+  const timeline = (since = 0) => {
+    const seen = new Map<string, { text: string; count: number }>();
+    for (const { time, text } of entries) {
+      if (time < since) continue;
+      const key = text.slice(13);
+      const known = seen.get(key);
+      if (known) known.count++;
+      else seen.set(key, { text, count: 1 });
+    }
+    return [...seen.values()]
+      .map(({ text, count }) => (count > 1 ? `${text} (×${count})` : text))
+      .join("\n")
+      .slice(-60_000);
+  };
   const url = `http://127.0.0.1:${port}`;
   try {
     await waitForRpc(url, alto.child, timeoutMs, "alto");
   } catch (e) {
     await alto.stop();
-    throw new Error(`${(e as Error).message}\n--- alto log ---\n${alto.output().slice(-4_000)}`);
+    throw new Error(
+      `${(e as Error).message}\n--- alto log ---\n${timeline().slice(-4_000)}${alto.output().slice(-4_000)}`,
+    );
   }
   return {
     url,
     entryPoint: ENTRY_POINT_V08,
-    executor: privateKeyToAddress(executorKey),
-    logs: alto.output,
+    executors: executorKeys.map((key) => privateKeyToAddress(key).toLowerCase() as Address),
+    timeline,
+    traced: async (sender, since, ms = 10_000) => {
+      const address = sender.toLowerCase();
+      const deadline = Date.now() + ms;
+      while (!entries.some((e) => e.time >= since && e.traced?.includes(address))) {
+        if (Date.now() > deadline) {
+          throw new Error(
+            `Alto logged no validation trace of a UserOp of ${sender} within ${ms} ms\n${timeline(since)}`,
+          );
+        }
+        await sleep(100);
+      }
+    },
     stop: alto.stop,
   };
 }
@@ -366,19 +475,66 @@ export interface BundlerStack extends Owned {
 }
 
 /**
- * Starts an anvil fork of `upstreamRpcUrl` and a strict Alto on it. The executor is a fresh random
- * key funded with 100 MNT on the fork only. `stop` kills Alto, then anvil.
+ * The ring buffers Prague's system calls write at the start of every block: EIP-4788's beacon roots
+ * (slots `timestamp % 8191` and `+ 8191`) and EIP-2935's block hashes (slot `(number - 1) % 8191`).
+ * On a fork, anvil first fetches each slot's old value from the upstream RPC, so every block it
+ * mines waits for three sequential upstream round trips (measured with anvil 1.8.5).
+ */
+const SYSTEM_RINGS: [Address, number][] = [
+  ["0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02", 2 * 8191],
+  ["0x0000F90827F1C53a10cb7A02335B175320002935", 8191],
+];
+
+/**
+ * Fork only: zeroes both rings locally, so mining a block needs nothing from upstream. Each block
+ * overwrites its slots with real values; the zeros replace roots and hashes of blocks before the
+ * fork, which nothing in the suites reads.
+ */
+async function localSystemRings(url: string) {
+  const writes = SYSTEM_RINGS.flatMap(([address, slots]) =>
+    Array.from({ length: slots }, (_, slot) => [address, toHex(slot), zeroHash]),
+  );
+  // In batches of 4096: anvil refuses a request body of several megabytes.
+  for (let i = 0; i < writes.length; i += 4096) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        writes
+          .slice(i, i + 4096)
+          .map((params, id) => ({ jsonrpc: "2.0", id, method: "anvil_setStorageAt", params })),
+      ),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const out = (await res.json()) as { error?: unknown }[] | { error?: unknown };
+    const failed = Array.isArray(out) ? out.find((r) => r.error) : out;
+    if (failed?.error)
+      throw new Error(`anvil_setStorageAt failed: ${JSON.stringify(failed.error)}`);
+  }
+}
+
+/**
+ * Executor wallets Alto gets. Its safe validator takes a free executor wallet for every validation
+ * (`getCodeHashes`) and frees a bundle's wallet only once a later block shows the bundle included,
+ * so with a single wallet a send waits as long as the previous bundle is unconfirmed (docs/infra.md
+ * §10.6). More wallets than bundles in flight keep validation from ever waiting for one.
+ */
+const EXECUTORS = 3;
+
+/**
+ * Starts an anvil fork of `upstreamRpcUrl` and a strict Alto on it. The executors are fresh random
+ * keys funded with 100 MNT each on the fork only. `stop` kills Alto, then anvil.
  */
 export async function startBundlerStack(upstreamRpcUrl: string): Promise<BundlerStack> {
   const fork = await startFork(upstreamRpcUrl);
   try {
     const client = forkClient(fork.url);
-    const executorKey = generatePrivateKey();
-    await client.setBalance({
-      address: privateKeyToAddress(executorKey),
-      value: parseEther("100"),
-    });
-    const bundler = await startAlto({ rpcUrl: fork.url, executorKey });
+    await localSystemRings(fork.url);
+    const executorKeys = Array.from({ length: EXECUTORS }, () => generatePrivateKey());
+    for (const key of executorKeys) {
+      await client.setBalance({ address: privateKeyToAddress(key), value: parseEther("100") });
+    }
+    const bundler = await startAlto({ rpcUrl: fork.url, executorKeys });
     return {
       rpcUrl: fork.url,
       upstream: fork.upstream,
