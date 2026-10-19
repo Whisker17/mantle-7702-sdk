@@ -3,6 +3,8 @@
 #   anvil fork (tracing node) <- trace-proxy.mjs (debug_* only) <- Alto (safe mode, EP v0.8)
 #                                trace-proxy.mjs (everything else) -> upstream Mantle Sepolia RPC
 # The public RPC rejects debug_*, hence the proxy; on a fork the harness (harness.ts) needs none.
+# UPSTREAM_RPC_URL may carry an API key: no log in the run directory shows a URL (anvil's output
+# goes through REDACT_URLS, trace-proxy.mjs redacts its own).
 #
 # Alto is installed with `npm ci` from alto/package-lock.json into the run directory (outside the
 # workspace). Unless ALTO_PATCH=0, alto/safe-validator.patch is applied: stock Alto cannot decode
@@ -26,6 +28,9 @@ ALTO_PATCH=${ALTO_PATCH:-1}
 ANVIL_PORT=18545
 PROXY_PORT=18546
 HERE=$(cd "$(dirname "$0")" && pwd)
+
+# sed: every URL becomes <redacted-url>, as redactUrls in packages/sdk/src/errors.ts.
+REDACT_URLS="s#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]\"'<>\`]+#<redacted-url>#g"
 
 # Stop a process and its children.
 kill_tree() {
@@ -84,7 +89,7 @@ start() {
 
 	# Tracing node: prague rules (no EIP-7825 per-tx gas cap); the proxy re-forks it to the head.
 	nohup anvil --fork-url "$UPSTREAM_RPC_URL" --port "$ANVIL_PORT" --hardfork prague --silent \
-		>"$RUN_DIR/anvil.log" 2>&1 &
+		> >(exec sed -E "$REDACT_URLS" >"$RUN_DIR/anvil.log" 2>&1) 2>&1 &
 	echo $! >"$RUN_DIR/anvil.pid"
 	wait_rpc "http://127.0.0.1:$ANVIL_PORT"
 

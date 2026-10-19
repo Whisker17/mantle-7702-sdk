@@ -61,6 +61,7 @@ import {
   RelayerExecutor,
   readCaliburNonce,
   readProfiles,
+  redactUrls,
   type Signer,
   SponsorRejectedError,
   signBatchedCall,
@@ -263,17 +264,24 @@ interface Row {
 
 let phase = "";
 const rows: Row[] = [];
+/** Every output: no key, and no URL (the RPC URL may carry an API key; viem errors print it). */
 const scrub = (text: string) =>
-  SECRETS.reduce((t, s) => t.replaceAll(new RegExp(s, "gi"), "<redacted>"), text);
+  redactUrls(
+    SECRETS.reduce((t, s) => t.replaceAll(new RegExp(s, "gi"), "<redacted>"), text).replaceAll(
+      RPC,
+      "<redacted-url>",
+    ),
+  );
 
 function log(line: string) {
   console.log(scrub(`${new Date().toISOString()} [${phase}] ${line}`));
 }
 
 function record(row: Omit<Row, "phase" | "at">): void {
-  const full = { phase, ...row, at: new Date().toISOString() };
+  const line = scrub(JSON.stringify({ phase, ...row, at: new Date().toISOString() }));
+  const full: Row = JSON.parse(line);
   rows.push(full);
-  appendFileSync(join(RUN_DIR, `${phase}.jsonl`), `${scrub(JSON.stringify(full))}\n`);
+  appendFileSync(join(RUN_DIR, `${phase}.jsonl`), `${line}\n`);
   log(`${row.step} | ${row.item} | ${row.outcome}${row.hash ? ` | ${row.hash}` : ""}`);
 }
 
@@ -464,7 +472,8 @@ async function serveSponsor(home: string, allowlist: Address[], cliEnv: NodeJS.P
     config,
     [
       "chainId: 5003",
-      `rpcUrl: "${RPC}"`,
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the config's ${VAR} reference
+      "rpcUrl: ${MANTLE_SEPOLIA_RPC_URL}",
       "listen: { host: 127.0.0.1, port: 0 }",
       `database: ${join(RUN_DIR, "sponsor.sqlite")}`,
       `relayer: "${relayer.address}"`,
@@ -2063,6 +2072,12 @@ async function main() {
   }
 }
 
-await main();
+/** A failure outside a phase (start-up, balances, an unhandled rejection), printed scrubbed. */
+function fatal(error: unknown) {
+  console.error(scrub(error instanceof Error ? (error.stack ?? error.message) : String(error)));
+  process.exit(1);
+}
+process.on("uncaughtException", fatal);
+await main().catch(fatal);
 // The in-process sponsor's HTTP agents and timers must not keep the run alive.
 process.exit(process.exitCode ?? 0);
