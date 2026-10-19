@@ -50,6 +50,11 @@ describe("sponsor config", () => {
       "/",
     );
     expect([config.relayerKeyEnv, config.settleTimeoutSeconds]).toEqual(["SPONSOR_RELAYER_KEY", 5]);
+    expect(plain.paymasterSignerKeyEnv).toBeUndefined();
+    expect(
+      parseConfig(parse(`${yaml()}paymasterSignerKey: \${SPONSOR_PM_KEY}\n`), "/")
+        .paymasterSignerKeyEnv,
+    ).toBe("SPONSOR_PM_KEY");
   });
 
   it("reads the RPC URL from the environment without echoing it", () => {
@@ -73,6 +78,11 @@ describe("sponsor config", () => {
       "a relayer key written into the file",
       (s: string) => `${s}relayerKey: "0x${"11".repeat(32)}"\n`,
       /relayerKey must reference the environment variable/,
+    ],
+    [
+      "a paymaster signer key written into the file",
+      (s: string) => `${s}paymasterSignerKey: "0x${"11".repeat(32)}"\n`,
+      /paymasterSignerKey must reference the environment variable/,
     ],
   ])("rejects %s", (_, edit, message) => {
     expect(() => parseConfig(parse(edit(yaml())), "/")).toThrow(message);

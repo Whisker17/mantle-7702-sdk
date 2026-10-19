@@ -1,4 +1,10 @@
-# Infrastructure on Mantle Sepolia — feasibility spike (release 0.1.0)
+# Infrastructure on Mantle Sepolia
+
+**Settled bundler setup (release 0.1.2): §10.** Sections 1–9 are the feasibility spike of
+release 0.1.0. Its scripts moved: `e2e/spike/bundler.sh` is now `e2e/bundler/sepolia.sh`,
+`e2e/spike/trace-proxy.mjs` is `e2e/bundler/trace-proxy.mjs`, and
+`e2e/spike/alto-safe-validator.patch` is `e2e/bundler/alto/safe-validator.patch`; the spike
+sections below cite the new paths.
 
 Measured 2026-10-18 on Mantle Sepolia (chain id 5003, public RPC
 `https://rpc.sepolia.mantle.xyz`, client `mantle-reth/op-reth-v2.2.1-mantle-arsia.2-dev`).
@@ -70,8 +76,8 @@ The SDK can compute the SignedBatchedCall digest offline before delegation. The 
 ### 3.1 What "strict" means in this run
 
 - **Bundler:** Alto `@pimlico/alto@0.0.21` (npm `latest`, published 2026-08-18). It is installed
-  pinned into the run directory outside the workspace by `e2e/spike/bundler.sh`, with
-  `e2e/spike/alto-safe-validator.patch` applied (§3.2, §9).
+  pinned into the run directory outside the workspace by `e2e/bundler/sepolia.sh` (then
+  `e2e/spike/bundler.sh`), with `e2e/bundler/alto/safe-validator.patch` applied (§3.2, §9).
 - **Flags:**
   `--entrypoints 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108 --rpc-url http://127.0.0.1:18546
   --safe-mode true --chain-type mantle --block-time 2000 --port 4337 --refilling-wallets false
@@ -83,7 +89,7 @@ The SDK can compute the SignedBatchedCall digest offline before delegation. The 
   `bundlerCollectorTracer` → `tracerResultParserV07` (ERC-7562 opcode, storage, stake and
   context rules). No rule or tracer code is modified.
 - **Tracing node:** Mantle Sepolia's public RPC rejects `debug_*` (`403 "rpc method is not
-  whitelisted"`). `e2e/spike/trace-proxy.mjs` therefore routes every `debug_*` request to a
+  whitelisted"`). `e2e/bundler/trace-proxy.mjs` therefore routes every `debug_*` request to a
   local **anvil 1.7.1** fork (`--hardfork prague`). Before each trace, the proxy calls
   `anvil_reset` to fork the upstream head. Every trace was logged with its fork block; one example
   is `debug_traceCall -> trace node @ fork block 45378193: ok`. Anvil supports JS tracers
@@ -127,10 +133,10 @@ The cause is in `esm/rpc/validation/SafeValidator.js`, `getValidationResultWithT
 The tracing itself succeeds. The traced data was `DelegateAndRevert(true, <ValidationResult>)`.
 A debug-enabled RPC would therefore not help.
 
-**Patch** (`e2e/spike/alto-safe-validator.patch`, one hunk plus one import): decode
+**Patch** (`e2e/bundler/alto/safe-validator.patch`, one hunk plus one import): decode
 `DelegateAndRevert(success, ret)`. On success, decode `ret` as the `simulateValidation` return
 value. On failure, decode `FailedOp` / `FailedOpWithRevert` so the `AAxx` reason survives. Every
-ERC-7562 check after this point is unchanged. `bundler.sh` with `ALTO_PATCH=0` runs stock Alto
+ERC-7562 check after this point is unchanged. `sepolia.sh` with `ALTO_PATCH=0` runs stock Alto
 and reproduces the failure.
 
 ### 3.3 Landed UserOps
@@ -142,7 +148,7 @@ op with `eth_estimateUserOperationGas` and sends it.
 | --- | --- | --- |
 | **Session UserOp, no `eip7702Auth`**, root A, session lane, `ping(3)`. Sponsored by SpikePaymaster. The real hook's `afterValidateUserOp` reads the Summary | [0x8f778f38…3fb7](https://sepolia.mantlescan.xyz/tx/0x8f778f383d7ad2bc95a8ea7f00da0b124c106cfe12de3d2eca50fc5965593fb7) | userOpHash `0x798442d326f4fd3af95cf1b28e417dae5a6efcc1c0f1836690122f160ef02a7e`, success. `Pinged(root A, 3)`. Tracer verdict OK. Sent through the same patched Alto, started by hand before the patch also decoded `FailedOp` |
 | **Root init UserOp with `eip7702Auth`** for fresh root B: `factory = 0x7702`, authorization `[CaliburEntry, 5003, nonce 0]`, raw root signature, grant batch (register, update, `hook.setPolicy`), sponsored by SpikePaymaster | [0x99e841ba…2119](https://sepolia.mantlescan.xyz/tx/0x99e841ba2adf79d13af08c4dbda130322552c96c64eb08041d465c4637272119) | **type `0x4`** bundle from the executor to EP v0.8, with the authorization in `authorizationList`. userOpHash `0x305f6aa959122e902b4356def5505560ab4883c98bfad3adbde76289254959a1`, success. Afterwards root B's code is `0xef0100 ‖ CaliburEntry` and the hook Summary is active. This is the bundler-path type-4 delegation |
-| Session UserOp, no `eip7702Auth`, root A, `ping(5)`, through the committed `bundler.sh up` + `userop.sh session 5` | [0xb1aa2ba1…94f3](https://sepolia.mantlescan.xyz/tx/0xb1aa2ba1b8ca3e29fb46e41099dd2ace19b3885fd04bcfd8ab39c014243794f3) | userOpHash `0xb4b80d00d2950c0fc2beb115425f7cea6606489c2575ef5c34e584efefa7a5be`, success. `Pinged(root A, 5)` |
+| Session UserOp, no `eip7702Auth`, root A, `ping(5)`, through the committed `bundler.sh up` (now `e2e/bundler/sepolia.sh`) + `userop.sh session 5` | [0xb1aa2ba1…94f3](https://sepolia.mantlescan.xyz/tx/0xb1aa2ba1b8ca3e29fb46e41099dd2ace19b3885fd04bcfd8ab39c014243794f3) | userOpHash `0xb4b80d00d2950c0fc2beb115425f7cea6606489c2575ef5c34e584efefa7a5be`, success. `Pinged(root A, 5)` |
 
 These validation reads passed the strict checks, as shown by the tracer result in Alto's log:
 
@@ -275,12 +281,17 @@ forge script script/spike/SpikeDeploy.s.sol --rpc-url "$MANTLE_SEPOLIA_RPC_URL" 
 forge script script/spike/SpikeRelayer.s.sol --sig "grant()" … --broadcast
 forge script script/spike/SpikeRelayer.s.sol --sig "sessionCall(uint256)" 1 … --broadcast
 # (b) BUNDLER_PRIVATE_KEY in env; ALTO_PATCH=0 reproduces the stock failure
-e2e/spike/bundler.sh up
+e2e/bundler/sepolia.sh up
 e2e/spike/userop.sh session <tag>                 # session UserOp, no eip7702Auth
 e2e/spike/userop.sh session <tag> with-auth       # rejected (§3.4)
 e2e/spike/userop.sh root-init                     # INITROOT_PRIVATE_KEY: fresh EOA
-e2e/spike/bundler.sh down
+e2e/bundler/sepolia.sh down
 ```
+
+`userop.sh` signs paymaster data in SpikePaymaster's layout (`validUntil ‖ validAfter` packed
+into 12 bytes). The deployed VerifyingPaymaster expects `abi.encode(validUntil, validAfter)`
+(64 bytes), so `userop.sh` works only with SpikePaymaster; for the deployed paymaster use
+§10.2.
 
 ## 7. MNT spent
 
@@ -294,12 +305,14 @@ e2e/spike/bundler.sh down
 Still parked: the bundler executor `0xc0cC…D451` holds 0.939351346 MNT, and the paymaster deposit
 holds 0.259249368 MNT (withdrawable by the deployer as owner).
 
+Release 0.1.2 spent another 0.011963848 MNT (§10.5).
+
 ## 8. What later work should take from this
 
 - **Bundler infrastructure.** For EP v0.8 safe mode, use the patched Alto 0.0.21 or an upstream
   fix (§9). The tracing node must support `debug_traceCall` with JS tracers. A geth-family node
-  avoids the anvil OP-020 artifact. Price Mantle's operator fee into PVG. Pimlico public offers
-  no v0.8.
+  avoids the anvil OP-020 artifact. Price Mantle's operator fee into PVG (release 0.1.2 decided
+  to accept the shortfall instead, §10.4). Pimlico public offers no v0.8.
 - **SDK `BundlerExecutor`:**
   - never attach `eip7702Auth` to session UserOps; only root init ops may carry it;
   - build `executeUserOp.selector ‖ abi.encode(BatchedCall)` calldata;
@@ -338,3 +351,288 @@ holds 0.259249368 MNT (withdrawable by the deployer as owner).
 > `success`, decode `ret` with `decodeFunctionResult(pimlicoSimulationsAbi, "simulateValidation")`.
 > Otherwise decode `ret` as `FailedOp` / `FailedOpWithRevert` and keep the `AAxx` reason for the
 > existing error mapping. A one-hunk patch is attached.
+
+## 10. Settled bundler setup (release 0.1.2)
+
+Measured 2026-10-18. **Decision: self-hosted Alto `@pimlico/alto@0.0.21` in safe mode against
+EntryPoint v0.8, with the one-hunk safe-validator patch (§3.2).** Two configurations share the
+same pinned install: a fork harness that test suites start themselves (§10.1), and a stack
+against the real chain (§10.2).
+
+Premises re-checked on 2026-10-18:
+
+- **Pimlico.** `eth_supportedEntryPoints` on `https://public.pimlico.io/v2/5003/rpc` still answers
+  `["0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789","0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+  "0x433709009B8330FDa32311DF1C2AFA402eD8D009"]` (v0.6, v0.7, v0.9). No EntryPoint v0.8, so
+  Pimlico stays out (§4).
+- **Newer Alto.** npm `latest` is still `0.0.21` and `main` is still
+  `0.0.0-main.20261013T112709`. Upstream `main` (`482c08bb`, 2026-10-13) still decodes the last
+  traced exit with `decodeErrorResult({ abi: pimlicoSimulationsAbi })` in
+  `src/rpc/validation/SafeValidator.ts` `getValidationResultWithTracerV07`; that file last
+  changed on 2025-12-31 (`0b9b22ff`, "feat/v9"). No issue or PR fixes it (a GitHub search for
+  `0x99410554` finds only #756 and #761, both about other decoding paths). The patch stays.
+- **Trace proxy on a fork.** Not needed. On an anvil fork, Alto points at anvil for everything,
+  and anvil serves `debug_traceCall` with Alto's JS tracer itself. The fork smoke test's
+  validation was traced there (Alto logged its `tracerResult`). The proxy is still needed
+  against the real chain, whose public RPC rejects `debug_*`.
+
+**Install.** `e2e/bundler/alto/package.json` pins `@pimlico/alto@0.0.21`, and
+`e2e/bundler/alto/package-lock.json` pins its whole dependency tree (viem 2.57.7, the version the
+patch was written against). Both setups install it with `npm ci --ignore-scripts` outside the pnpm
+workspace and then apply the patch with `patch -p1`. The harness caches the install in the OS
+temp directory under a hash of the lockfile and the patch; `sepolia.sh` caches it in its run
+directory. This was chosen over a root devDependency with a pnpm patch for three reasons. Alto
+brings 261 packages (about 360 MB) that only the bundler suites use. pnpm 11 rejects two of its
+build scripts (`msgpackr-extract`, `protobufjs`) unless `pnpm-workspace.yaml` lists them. And the
+npm lockfile pins the tree just as exactly. The cost is one `npm ci` per fresh machine; on a CI
+runner, every run is fresh. Measured locally: about 20 s with a warm npm cache.
+
+**Alto flags (both setups):** `--entrypoints 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108
+--safe-mode true --chain-type mantle --refilling-wallets false --log-level info`, plus `--rpc-url`
+and `--port`. The two setups differ in three flags:
+
+- **`sepolia.sh`:** `--block-time 2000 --deploy-simulations-contract true
+  --public-client-log-level warn`. The simulation contracts' CREATE2 salt is the utility key's
+  address. With the 0.1.0 executor key they already exist (§3.1), so nothing is deployed.
+- **The harness:** `--block-time 1000 --deploy-simulations-contract false --json`, and it passes
+  those same four addresses (`--pimlico-simulation-contract`,
+  `--entrypoint-simulation-contract-v7/-v8/-v9`). With random executor keys, Alto would otherwise
+  deploy a fresh set on every fork at startup, and each deployment needs lazy fork fetches from
+  the upstream RPC. `--json` makes Alto write its log as JSON lines, synchronously, before the
+  reply they precede (the default pretty log goes through a worker thread). The harness gives
+  Alto three executor keys (§10.6).
+
+The executor and utility keys go in
+through `ALTO_EXECUTOR_PRIVATE_KEYS` / `ALTO_UTILITY_PRIVATE_KEY`, never on a command line. All
+other options keep Alto's defaults (`--min-entity-stake 1`, `--min-entity-unstake-delay 1`,
+`--eip-7702-support true`). Alto's own RPC timeout is a fixed 10 s.
+
+### 10.1 Fork harness (`e2e/bundler/harness.ts`)
+
+The fork harness needs Node, npm, `patch` and anvil, and no secrets. These are exactly the tools
+CI's `typescript` job has.
+
+- `startBundlerStack(upstreamRpcUrl)` starts anvil forking the upstream head (`--hardfork prague
+  --block-time 1 --mixed-mining`: a block per transaction and one every second besides) and the
+  patched Alto on it. It zeroes the Prague system contracts' ring buffers on the fork, so mining
+  a block reads nothing from upstream (§10.6). The three executors are fresh random keys funded
+  with 100 MNT each by `anvil_setBalance`; their keys stay inside the harness. The call returns
+  `{ rpcUrl, client, bundler: { url, entryPoint, executors, timeline, traced }, stop }`.
+  `timeline(since)` is Alto's log since a time, one line per entry, for failure messages.
+  `traced(sender, since)` waits (10 s bound) until Alto has logged the ERC-7562 tracer result of
+  a validation of a UserOp of `sender` since that time: the suites' per-op proof that safe-mode
+  validation ran.
+- `startFork(upstreamRpcUrl)` and `startAlto({ rpcUrl, executorKeys })` are the two halves, for a
+  suite that already has its own fork. `startFork` retries a start in which anvil exited (up to
+  three attempts), as the SDK suites' fork helper does. `installAlto()` returns the CLI path.
+- `setPaymasterSigner(client, paymaster, signer)` works on a fork only. It swaps the deployed
+  VerifyingPaymaster's `verifyingSigner` immutable in the runtime code (two occurrences) for an
+  address whose key the test holds, and asserts the result through `verifyingSigner()`. The
+  address, the logic and the EntryPoint deposit stay the same.
+- Ports are random free ports. Every wait is bounded: anvil 60 s, the install 300 s, Alto 240 s,
+  a bundler request 60 s, the receipt 120 s, a validation trace 10 s. `stop()` sends SIGTERM, then SIGKILL after
+  10 s. Every child is also killed when the test process exits.
+- The verification-gas headroom stays at 150 % of Alto's estimate, because the tracing node is
+  still anvil (§3.5).
+
+`e2e/bundler/userop.ts` (`sendSponsoredUserOp`) builds an op for a Calibur account, sizes it with
+`eth_estimateUserOperationGas` and signs the paymaster data directly with the signer's key. The
+data is `abi.encode(validUntil, validAfter) ‖ 65-byte signature` over `getHash`, which covers the
+2-byte `0x7702` initCode the bundler packs. The function then root-signs the op, sends it and
+waits for the receipt. It needs no sponsor service.
+
+Smoke suite `e2e/bundler/bundler.test.ts`: the root init UserOp of a fresh EOA, with
+`eip7702Auth`, whose batch mints 1 mUSD. The deployed paymaster sponsors it. The suite asserts the
+op succeeded, the paymaster is the deployed one, Alto traced the op's validation, the bundle is a
+type-4 transaction from an executor, the account's code is `0xef0100 ‖ CaliburEntry`, and the
+mint landed. A second test stops mining, sends two such ops and requires both bundles in anvil's
+pool before any block is mined (§10.6, mechanism 1). Run it with:
+
+```bash
+MANTLE_SEPOLIA_RPC_URL=https://rpc.sepolia.mantle.xyz pnpm exec vitest run e2e/bundler
+```
+
+Measured locally: 2 passed, 0 skipped, in 13–20 s with the install cached.
+
+### 10.2 Stack against Mantle Sepolia (`e2e/bundler/sepolia.sh`)
+
+The chain stack chains anvil (the tracing node) to `trace-proxy.mjs` to the same patched Alto.
+`debug_*` requests go to anvil; everything else goes to the real RPC. Before this release, the
+proxy re-forked anvil at the head before *every* trace. A fresh fork fetches every account and
+slot it touches lazily over the public RPC. On 2026-10-18 the public RPC answered
+`eth_blockNumber` in 0.4–12.7 s, so a cold trace took longer than Alto's fixed 10 s timeout and
+every send failed with `The request took too long to respond`. The proxy now re-forks only when
+a raw transaction (a bundle) has gone upstream since the last fork, or when the fork is older
+than `FORK_MAX_AGE_S` (default 120 s). Otherwise it reuses the warm fork. `land-sepolia.ts`
+retries a send that timed out this way, up to three attempts. The landing below needed one
+retry.
+
+```bash
+# executor key: BUNDLER_PRIVATE_KEY (env only); the paymaster's verifyingSigner key: PAYMASTER_SIGNER_PRIVATE_KEY
+e2e/bundler/sepolia.sh up            # Alto on http://127.0.0.1:4337, logs in $BUNDLER_RUN_DIR
+MANTLE_SEPOLIA_RPC_URL=https://rpc.sepolia.mantle.xyz node e2e/bundler/land-sepolia.ts
+e2e/bundler/sepolia.sh down
+```
+
+`land-sepolia.ts` runs under plain Node (type stripping). It generates a fresh root key in memory
+and sends that account's init UserOp, the same op as the smoke test. The sponsor is the deployed
+VerifyingPaymaster `0x301813D34cBebdf90FEBf32929CfB323c9eF3B4C`, signed by its `verifyingSigner`
+`0x7223c837518A51eF0f6c40d67B539D1Aa29a67E9`. The script prints the result and the bundle's
+fee split as JSON.
+
+### 10.3 Landed on Mantle Sepolia
+
+| UserOp | handleOps tx | Facts |
+| --- | --- | --- |
+| **Root init UserOp with `eip7702Auth`** for fresh EOA `0x128b153ec75cF21aFA77Ea6b39222Ff3786819D2`, batch `MockUSD.mint(account, 1e6)`, **sponsored by the deployed VerifyingPaymaster** | [0x41c5245f…784a](https://sepolia.mantlescan.xyz/tx/0x41c5245faefb945b9885d0adf91b4ff207478c62245524c886eb0be5b211784a) | userOpHash `0x882cefcef984c630e0a5b4fdc4fd6672eb24be08608bb775afc566bceab79fde`, success, block 45 396 785. **Type `0x4`** bundle from the executor `0xc0cC…D451` to EP v0.8, with one authorization. Afterwards the account's code is `0xef0100 ‖ 0x000000005c84F8Fd50b21CAC312528A64437030e` |
+
+This is the first op the deployed paymaster has sponsored through the strict bundler on chain.
+Its delegate check (`EXTCODEHASH` of the sender) passed safe-mode validation. Its hash covered
+the 2-byte `0x7702` initCode. The op's gas: callGasLimit 60 267, verificationGasLimit 88 956
+(150 % of the estimate), preVerificationGas 82 454, paymasterVerificationGasLimit 21 219,
+maxFeePerGas 60.0001 gwei, actualGasUsed 191 700. A session UserOp through the deployed
+paymaster and hook is left to the bundler-path E2E suite.
+
+### 10.4 Operator-fee PVG shortfall: accepted
+
+These numbers come from the bundle above. The executor's balance delta matches the formula in §5
+to the wei.
+
+| gasUsed | effectiveGasPrice | L2 fee (MNT) | l1Fee (wei) | operator fee (MNT) | executor paid (MNT) | EP refund `actualGasCost` (MNT) | executor net (MNT) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 183 045 | 55.360145566 gwei | 0.010133398 | 113 821 536 | 0.001830450 | 0.011963848 | 0.009585019 | −0.002378829 |
+
+The executor lost 19.9 % of what it paid. This splits into three parts:
+
+- the operator fee, 0.001830450 MNT (10 gwei/gas);
+- a priority fee above the 50 gwei base fee, 183 045 × 5.36 gwei = 0.000981148 MNT. Alto bid
+  `maxPriorityFeePerGas = maxFeePerGas`. The bundles in §5 paid about 0.0001 gwei;
+- offset by the op's charged-but-unused gas and PVG margin, +0.000432751 MNT.
+
+Closing the shortfall would take about 47 600 more PVG at the op's 50.0001 gwei, which means
+raising PVG to about 1.58× Alto's estimate.
+
+**Decision: accept the shortfall; do not compensate in PVG for 0.1.2.** In this setup one
+operator funds both the bundler executor and the paymaster deposit. Raising PVG would only move
+the same MNT from the executor to the deposit, and it would add a PVG formula that the paymaster
+signer (ERC-7677) must also price. Measured cost: 0.0011–0.0043 MNT per bundle (§5 and above).
+The executor holds 0.936972517 MNT, which covers several hundred bundles. Revisit this before
+a mainnet or third-party bundler. On an anvil fork none of this is visible: anvil charges no
+Mantle operator fee or L1 fee.
+
+### 10.5 MNT spent (release 0.1.2)
+
+| Spent on | MNT |
+| --- | ---: |
+| Bundler executor: net loss on the bundle in §10.3 | 0.002378829 |
+| Paymaster deposit consumed (`actualGasCost`) | 0.009585019 |
+| **Total consumed** | **0.011963848** |
+
+The failed sends were rejected during validation and broadcast nothing. Over the whole run the
+executor nonce went from 7 to 8. The simulation contracts already existed (§3.1), so nothing was
+deployed. Still parked: the executor `0xc0cC…D451` holds 0.936972517 MNT, and the deployed
+paymaster's deposit holds 4.990414981 MNT.
+
+### 10.6 Alto 0.0.21 on a fork under CI load
+
+Measured 2026-10-19 on GitHub's `ubuntu-latest` runners (anvil 1.8.5 from `foundry-toolchain`)
+and locally (anvil 1.7.1 and 1.8.5). Two Alto mechanisms and one fork artifact made the bundler
+suites stall or slow down on some runners. The harness (§10.1) now removes or bounds each one.
+
+**Mechanism 1: validation waits for a free executor wallet.** Alto's safe validator calls
+`getCodeHashes` for every validation, on `eth_sendUserOperation` and again in the mempool's
+pre-bundle re-check. It takes an executor wallet from the sender manager's semaphore
+(`createMemorySenderManager.getWallet`, no timeout). A bundle holds its wallet until
+`handleBlock` sees, on a block after it was sent, that the bundle was included
+(`freeSubmittedBundle`). With the single executor the harness used to give Alto, the next send
+waits for that block:
+
+- Locally, with mining stopped and op 1's bundle pending in anvil's pool, op 2's
+  `eth_sendUserOperation` took 30 517 ms and was answered about 1.2 s after a block was mined.
+  With three executors it took 1 253 ms.
+- On CI, on an automining fork, a root UserOp's send logged its `tracerResult` and then
+  nothing for 118 s until the CLI's 120 s bound; the next command got `Bundler did not answer
+  within 120000 ms` (`cli.bundler.fork.test.ts`, the 2026-10-18 diagnostic run). A fork that only
+  mines on a transaction mines no later block once the suite waits for a reply.
+
+The harness now gives Alto three executors, so one unconfirmed bundle never blocks validation,
+and the fork mines a block every second besides one per transaction (`--mixed-mining`), so every
+inclusion is seen within a second. The smoke suite's second test checks it: with mining stopped,
+two ops' bundles must both reach anvil's pool. It fails with one executor (no second bundle
+within 60 s) and passes with three (4–5 s). On a live chain blocks keep coming, so the wait is
+bounded by the block time. But a bundler with one executor validates at most about one op per
+block while a bundle is in flight. `sepolia.sh` runs one executor, which is enough for its
+single landing; an operated bundler needs several.
+
+**Mechanism 2: an op that fails the pre-bundle re-check is never dropped.** In
+`Mempool.process`, `shouldSkip` catches a second-validation error, calls
+`store.removeOutstanding` for an op that `process` has already popped ("tried to remove
+non-existent user op from mempool"), and returns `skip: true` without `removeOutstanding: true`.
+`process` then adds the op back to the outstanding pool. The op is re-validated about once a
+second and never bundled; the client waits out its receipt bound. Observed on CI: one op
+re-validated every ~1.5 s for the whole of a 123 s step. Each pass also calls
+`decreaseUserOpSeenStatus`, which updates the reputation counters of the sender and the
+paymaster. In an earlier run Alto then refused new ops naming the deployed paymaster with
+`-32505 … is unstaked and must stake minimum 1`. Upstream `main` (`src/mempool/mempool.ts`, last
+changed 2026-10-08) has the same code.
+
+On the real chain this makes an unstaked paymaster fragile. Our VerifyingPaymaster is unstaked
+(§1). An op that passes the first validation but fails the re-check, for example because its
+sponsorship window (`validUntil`) passes while it waits, loops in the bundler. It can get the
+paymaster throttled, and with it every account the sponsor serves, until the bundler restarts.
+The harness cannot fix this. It removes the slowness that let windows lapse (below), and a
+suite then fails at its bounded receipt wait with Alto's timeline in the message. Options left
+open for a production setup: stake the paymaster, run a bundler with the fix below, and watch
+for `2nd Validation error` in its log.
+
+> **Upstream report (draft, not filed): an op that fails the pre-bundle re-validation is re-queued
+> forever.** Version: `@pimlico/alto` 0.0.21; same code on `main`. In `Mempool.shouldSkip`, the
+> `catch` around `validator.validateUserOp` calls `store.removeOutstanding` for the already
+> popped op and returns `{ skip: true }` without `removeOutstanding: true`, so `process()`
+> re-adds it with `addOutstanding`. The op is re-validated on every bundling pass, never
+> bundled and never dropped, and each pass calls `decreaseUserOpSeenStatus`. Fix: return
+> `removeOutstanding: true` from that `catch`, and set the op's status to rejected so
+> `eth_getUserOperationReceipt` callers can stop waiting.
+
+**Fork artifact: every block reads storage slots from the upstream RPC.** Under Prague, anvil
+runs system calls at the start of every block: EIP-2935 writes the block-hash ring
+(`0x0000F908…2935`, slot `(number - 1) % 8191`), and anvil 1.8.5, unlike 1.7.1, also runs
+EIP-4788, which writes the beacon-root ring (`0x000F3df6…Beac02`, slots `timestamp % 8191` and
+`+ 8191`). On a fork anvil first reads each slot's old value from the upstream RPC, one request at
+a time, before it can build the block. An idle fork with a block a second, reaching the public
+RPC in about 0.43 s per request, made 6 block-hash and 12 beacon-root reads in 10 s with anvil
+1.8.5 and mined only about six blocks; anvil 1.7.1 made 11 block-hash reads and nothing else.
+This is why the slowness showed on CI (anvil 1.8.5) and not locally (1.7.1). CI also reaches the
+public RPC in about 0.4 s per request, so with interval mining every block cost about 1.2 s of
+upstream reads. On the slow runs a step's duration matched the sum of its upstream reads: a
+`session grant` took 123 s for 273 reads (116 s), an `agent exec` 38 s for 90 reads (39 s). Root
+management ops (init, grant, update, revoke) were the slow ones because they also write the
+most fresh storage, a new key's and policy's slots in the account's Calibur storage and in the
+hook, and anvil reads each of those slots upstream too.
+
+The harness now zeroes both rings on the fork before Alto starts (24 573 `anvil_setStorageAt`
+in batches of 4 096). The zeros replace pre-fork roots and hashes, which no suite reads, and
+each block then writes its real values. An idle fork then made no upstream read in 10 s, even
+after a one-day time jump. What is left is each op's fresh storage. On CI after the change, a
+`session grant` made 27 reads and took 10.9 s, an init 36 reads and 13.9 s, and a session
+`agent exec` 2–3 reads and about 2 s. The fresh storage is unavoidable on a lazily fetched fork
+and scales with the upstream latency.
+
+**Strict-validation evidence.** The suites used to assert that Alto's whole log contained
+`tracerResult` right after the receipt. That check was not tied to the op, and it failed 2 of 3
+times in loaded local runs although the log had not rolled over: the failure output began at
+Alto's first log line. The likely cause is that the default pretty log is formatted in a worker
+thread and can lag behind the replies. This was not reproduced: in 12 loaded local runs of the
+old harness the line had arrived by the receipt every time. Now Alto logs JSON lines
+synchronously, and `traced(sender, since)` waits, with a
+10 s bound, for a validation trace whose account frame is the op's sender after the step began.
+The bundler-path suite checks this for every bundled op, not only one, and the sponsor's fork
+suite for both of its ops. In 9 loaded local runs (3 rounds × 3 concurrent copies of the
+bundler fork suites, plus 6 CPU burners) the trace was already logged when the receipt
+arrived, every time.
+
+**Result on CI** (job wall times, three runs of the same commit): the `e2e` job took 7.4–8.3 min,
+against 20.2 min on the base branch and 10–25 min before; the path suite took 155–159 s, against
+870 s. The `typescript` job took 11.6–14.0 min, against 13.1 min on the base branch. Most of that
+job is suites outside this harness; its two bundler suites took 110–133 s together, against
+157 s.

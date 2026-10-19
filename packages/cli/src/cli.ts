@@ -5,6 +5,7 @@ import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
 import {
   type AddressBook,
   AgentSession,
+  BundlerExecutor,
   ExecutionRevertedError,
   type Executor,
   getChain,
@@ -23,6 +24,7 @@ import {
   saveProfile,
 } from "@mantle-aa/sdk";
 import {
+  EMBEDDED_PAYMASTER_SIGNER_KEY_ENV,
   EMBEDDED_SWITCH_ENV,
   Ledger,
   loadConfig,
@@ -58,6 +60,8 @@ import {
 export const RPC_URL_ENV = "MANTLE_AA_RPC_URL";
 /** A long-running sponsor's URL when `--sponsor-url` is not given. */
 export const SPONSOR_URL_ENV = "MANTLE_AA_SPONSOR_URL";
+/** The ERC-4337 bundler's URL when `--bundler-url` is not given (`--via bundler` only). */
+export const BUNDLER_URL_ENV = "MANTLE_AA_BUNDLER_URL";
 /** Overrides the keystore and profile directory `~/.mantle-aa`. */
 export const HOME_ENV = "MANTLE_AA_HOME";
 
@@ -90,6 +94,8 @@ const GLOBAL_OPTIONS: ParseArgsOptionsConfig = {
   help: { type: "boolean", short: "h" },
   "rpc-url": { type: "string" },
   "sponsor-url": { type: "string" },
+  "bundler-url": { type: "string" },
+  via: { type: "string" },
 };
 
 const USAGE = `usage: mantle-aa <command> [options]
@@ -111,8 +117,12 @@ const USAGE = `usage: mantle-aa <command> [options]
                    [--max-fee-per-gas <wei>] [--max-priority-fee-per-gas <wei>]
 
 options:  --json  --rpc-url <url>  --sponsor-url <url>
-env:      ${RPC_URL_ENV}, ${SPONSOR_URL_ENV}, ${PASSWORD_ENV}, ${HOME_ENV},
-          ${EMBEDDED_SWITCH_ENV}=1 with MANTLE_AA_RELAYER_KEY (embedded sponsor)
+          --via relayer|bundler  --bundler-url <url>
+          (--via: the path account init|exec, session grant|update|revoke and agent exec
+          submit through; default relayer. --via bundler needs a bundler URL.)
+env:      ${RPC_URL_ENV}, ${SPONSOR_URL_ENV}, ${BUNDLER_URL_ENV}, ${PASSWORD_ENV}, ${HOME_ENV},
+          ${EMBEDDED_SWITCH_ENV}=1 with MANTLE_AA_RELAYER_KEY (embedded sponsor),
+          and ${EMBEDDED_PAYMASTER_SIGNER_KEY_ENV} for --via bundler
 exit:     0 ok, 10 policy, 11 limit, 12 inventory, 13 key expired/revoked,
           20 sponsor rejected, 21 sponsor busy, 30 reverted, 1 other
 `;
@@ -193,18 +203,25 @@ class Context {
     return password;
   }
 
+  /** `--via`: the path every submitting command takes; the relayer by default. */
+  get via(): Executor["kind"] {
+    return string(this.values, "via") === "bundler" ? "bundler" : "relayer";
+  }
+
   /**
-   * The executor for `account`'s batches. The sponsor is reached on first submission only:
-   * `--sponsor-url` / MANTLE_AA_SPONSOR_URL, or with MANTLE_AA_EMBEDDED_RELAYER=1 an embedded
-   * sponsor (allowlisting `account`, its ledger under the profile directory) closed at exit. A
-   * batch that reverted on chain throws `ExecutionRevertedError`.
+   * The executor for `account`'s batches, on the `--via` path. The sponsor (and the bundler) are
+   * reached on first submission only: `--sponsor-url` / MANTLE_AA_SPONSOR_URL, or with
+   * MANTLE_AA_EMBEDDED_RELAYER=1 an embedded sponsor (allowlisting `account`, its ledger under the
+   * profile directory) closed at exit. A batch that reverted on chain throws
+   * `ExecutionRevertedError`.
    */
   executor(account: Address): Executor {
     let inner: Promise<Executor> | undefined;
+    const kind = this.via;
     return {
-      kind: "relayer",
+      kind,
       submit: async (request) => {
-        inner ??= this.#relayer(account);
+        inner ??= kind === "bundler" ? this.#bundler(account) : this.#relayer(account);
         const result = await (await inner).submit(request);
         if (!result.success) {
           throw new ExecutionRevertedError({ reason: `transaction ${result.hash} reverted` });
@@ -215,12 +232,43 @@ class Context {
   }
 
   async #relayer(account: Address): Promise<Executor> {
+    const { url, relayer } = await this.#sponsorOf(account);
+    return new RelayerExecutor({
+      client: this.client(),
+      url,
+      ...(relayer && { relayer }),
+      addresses: this.addresses,
+    });
+  }
+
+  async #bundler(account: Address): Promise<Executor> {
+    const bundlerUrl = string(this.values, "bundler-url") || this.env[BUNDLER_URL_ENV];
+    if (!bundlerUrl) {
+      throw new UsageError(`no bundler: pass --bundler-url or set ${BUNDLER_URL_ENV}`);
+    }
+    const { url } = await this.#sponsorOf(account);
+    return new BundlerExecutor({
+      client: this.client(),
+      bundlerUrl,
+      sponsorUrl: url,
+      addresses: this.addresses,
+    });
+  }
+
+  /** The sponsor's URL; an embedded sponsor's also its relayer. */
+  async #sponsorOf(account: Address): Promise<{ url: string; relayer?: Address }> {
     const url = string(this.values, "sponsor-url") || this.env[SPONSOR_URL_ENV];
     const embedded = this.env[EMBEDDED_SWITCH_ENV] === "1";
     if (embedded && url) {
       throw new UsageError(`use either a sponsor URL or ${EMBEDDED_SWITCH_ENV}=1, not both`);
     }
     if (embedded) {
+      // Without the paymaster signer key the embedded sponsor serves no pm_* methods.
+      if (this.via === "bundler" && !this.env[EMBEDDED_PAYMASTER_SIGNER_KEY_ENV]) {
+        throw new UsageError(
+          `the embedded sponsor needs ${EMBEDDED_PAYMASTER_SIGNER_KEY_ENV} for --via bundler`,
+        );
+      }
       mkdirSync(this.home, { recursive: true, mode: 0o700 });
       const sponsor = await startEmbeddedSponsor({
         rpcUrl: this.rpcUrl(),
@@ -230,19 +278,14 @@ class Context {
         env: this.env,
       });
       this.#sponsor = sponsor;
-      return new RelayerExecutor({
-        client: this.client(),
-        url: sponsor.url,
-        relayer: sponsor.relayer,
-        addresses: this.addresses,
-      });
+      return { url: sponsor.url, relayer: sponsor.relayer };
     }
     if (!url) {
       throw new UsageError(
         `no sponsor: pass --sponsor-url, set ${SPONSOR_URL_ENV}, or set ${EMBEDDED_SWITCH_ENV}=1`,
       );
     }
-    return new RelayerExecutor({ client: this.client(), url, addresses: this.addresses });
+    return { url };
   }
 
   async close(): Promise<void> {
@@ -541,17 +584,12 @@ export const COMMANDS: Record<string, Command> = {
     },
   },
   "agent exec": {
-    options: { ...AGENT, ...CALLS, via: { type: "string" } },
+    options: { ...AGENT, ...CALLS },
     async run(ctx, v) {
-      const via = string(v, "via") ?? "relayer";
-      if (via === "bundler") {
-        throw new NotAvailableError("agent exec --via bundler is not available in this version");
-      }
-      if (via !== "relayer") throw new UsageError("--via must be relayer or bundler");
       const agent = required(v, "agent");
       const calls = parseCalls(required(v, "calls"));
       const session = await agentSession(ctx, agent, true);
-      const result = await session.exec(calls, { via });
+      const result = await session.exec(calls, { via: ctx.via });
       return { account: session.account, profile: agent, keyHash: session.keyHash, ...result };
     },
   },
@@ -639,6 +677,9 @@ export async function run(argv: readonly string[], io: CliIO = {}): Promise<numb
     if (values.help) {
       stdout(USAGE);
       return 0;
+    }
+    if (values.via !== undefined && values.via !== "relayer" && values.via !== "bundler") {
+      throw new UsageError("--via must be relayer or bundler");
     }
     ctx = new Context({ ...io, stdout, stderr, stdin }, values);
     const result = await spec.run(ctx, values);

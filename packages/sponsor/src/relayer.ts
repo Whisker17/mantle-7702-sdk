@@ -22,15 +22,24 @@ export function loadRelayerAccount(
 ): LocalAccount {
   const name = config.relayerKeyEnv;
   if (!name) throw new Error("the config names no relayerKey");
-  const key = env[name];
-  if (!key || !isHex(key) || key.length !== 66) {
-    throw new Error(`${name} must hold the relayer's 32-byte hex private key`);
-  }
-  const account = privateKeyToAccount(key);
+  const account = loadKeyAccount(name, "relayer", env);
   if (config.relayer && account.address !== config.relayer) {
     throw new Error(`${name} is the key of ${account.address}, not of relayer ${config.relayer}`);
   }
   return account;
+}
+
+/** The account of the private key in environment variable `name`. Errors never contain the key. */
+export function loadKeyAccount(
+  name: string,
+  role: string,
+  env: NodeJS.ProcessEnv = process.env,
+): LocalAccount {
+  const key = env[name];
+  if (!key || !isHex(key) || key.length !== 66) {
+    throw new Error(`${name} must hold the ${role}'s 32-byte hex private key`);
+  }
+  return privateKeyToAccount(key);
 }
 
 /** The relayer's mined (`latest`) and mined-plus-queued (`pending`) transaction counts. */

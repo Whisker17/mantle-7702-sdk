@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import type { RelayResult, SponsorRejectCode } from "@mantle-aa/sdk";
+import type { PaymasterDataResult, RelayResult, SponsorRejectCode } from "@mantle-aa/sdk";
 import type { Address, Hex } from "viem";
 
 /** Management requests (init / grant / revoke / panic) draw on a reserve business requests cannot. */
@@ -21,8 +21,9 @@ export const dayOf = (unixSeconds: number): number => Math.floor(unixSeconds / 8
 
 /**
  * A paid request's life (DESIGN §5.2): `reserved` (worst case counted against the caps) →
- * `submitted` (a relayer transaction holds its nonce) → `settled` (charged from the receipt that
- * confirmed, the rest released), or → `released` (nothing was mined for it; nothing charged).
+ * `submitted` (a relayer transaction holds its nonce, or the paymaster signature is issued) →
+ * `settled` (charged from the receipt or `UserOperationEvent` that confirmed, the rest released),
+ * or → `released` (nothing was mined for it; nothing charged).
  */
 export type LedgerState = "reserved" | "submitted" | "settled" | "released";
 export const OPEN_STATES: readonly LedgerState[] = ["reserved", "submitted"];
@@ -44,6 +45,29 @@ export interface LedgerEntry {
   result: RelayResult | null;
   /** Once released: why nothing was mined. */
   error: { reason: SponsorRejectCode; detail: string } | null;
+  /** A paymaster sponsorship (its `batchDigest` is the paymaster hash); null for a relayer request. */
+  paymaster: PaymasterRecord | null;
+}
+
+/** A paymaster sponsorship: issued, then watched on chain until included or expired. */
+export interface PaymasterRecord {
+  /** The EntryPoint's hash of the sponsored UserOp: its `UserOperationEvent` topic. */
+  userOpHash: Hex;
+  /** Unix seconds: the sponsorship cannot be included in a block after it. */
+  validUntil: number;
+  /** Every block up to this one is known to hold no `UserOperationEvent` for `userOpHash`. */
+  scannedTo: number;
+  /** What every retry returns. */
+  result: PaymasterDataResult;
+  /** Once settled: the inclusion and what the paymaster deposit was charged. */
+  included?: {
+    transactionHash: Hex;
+    blockNumber: number;
+    success: boolean;
+    /** Wei, decimal. */
+    actualGasCost: string;
+    actualGasUsed: string;
+  };
 }
 
 /** One signed relayer transaction for an entry: its first submission, a bump or a cancel. */
@@ -70,6 +94,7 @@ interface EntryRow {
   charged_fee: string;
   result: string | null;
   error: string | null;
+  paymaster: string | null;
 }
 
 const toEntry = (r: EntryRow): LedgerEntry => ({
@@ -84,6 +109,7 @@ const toEntry = (r: EntryRow): LedgerEntry => ({
   charged: { gas: BigInt(r.charged_gas), fee: BigInt(r.charged_fee) },
   result: r.result === null ? null : JSON.parse(r.result),
   error: r.error === null ? null : JSON.parse(r.error),
+  paymaster: r.paymaster === null ? null : JSON.parse(r.paymaster),
 });
 
 const GLOBAL = "*";
@@ -127,7 +153,8 @@ export class SponsorStore {
         charged_gas TEXT NOT NULL DEFAULT '0',
         charged_fee TEXT NOT NULL DEFAULT '0',
         result TEXT,
-        error TEXT
+        error TEXT,
+        paymaster TEXT
       );
       -- At most one request in flight per account, whatever the code above it does.
       CREATE UNIQUE INDEX IF NOT EXISTS ledger_one_open_per_account
@@ -141,6 +168,11 @@ export class SponsorStore {
         raw TEXT NOT NULL
       );
     `);
+    // A database from before the paymaster methods lacks the column.
+    const columns = this.#db.prepare("PRAGMA table_info(ledger)").all() as { name: string }[];
+    if (!columns.some((c) => c.name === "paymaster")) {
+      this.#db.exec("ALTER TABLE ledger ADD COLUMN paymaster TEXT");
+    }
   }
 
   /** Runs `fn` in one write transaction (`BEGIN IMMEDIATE`), rolled back if it throws; nests. */
@@ -186,11 +218,14 @@ export class SponsorStore {
     return row && toEntry(row as unknown as EntryRow);
   }
 
-  insertEntry(e: Omit<LedgerEntry, "charged" | "result" | "error" | "nonce">): void {
+  insertEntry(
+    e: Omit<LedgerEntry, "charged" | "result" | "error" | "nonce" | "paymaster"> &
+      Partial<Pick<LedgerEntry, "paymaster">>,
+  ): void {
     this.#db
       .prepare(
-        `INSERT INTO ledger (digest, batch_digest, account, class, day, state, reserved_gas, reserved_fee)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO ledger (digest, batch_digest, account, class, day, state, reserved_gas, reserved_fee, paymaster)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         e.digest,
@@ -201,13 +236,17 @@ export class SponsorStore {
         e.state,
         String(e.reserved.gas),
         String(e.reserved.fee),
+        e.paymaster ? JSON.stringify(e.paymaster) : null,
       );
   }
 
   updateEntry(
     digest: Hex,
     patch: Partial<
-      Pick<LedgerEntry, "state" | "nonce" | "reserved" | "charged" | "result" | "error">
+      Pick<
+        LedgerEntry,
+        "state" | "nonce" | "reserved" | "charged" | "result" | "error" | "paymaster"
+      >
     >,
   ): void {
     const columns: [string, string | number | null][] = [];
@@ -223,6 +262,9 @@ export class SponsorStore {
     }
     if (patch.result !== undefined) columns.push(["result", JSON.stringify(patch.result)]);
     if (patch.error !== undefined) columns.push(["error", JSON.stringify(patch.error)]);
+    if (patch.paymaster !== undefined) {
+      columns.push(["paymaster", JSON.stringify(patch.paymaster)]);
+    }
     this.#db
       .prepare(`UPDATE ledger SET ${columns.map(([c]) => `${c} = ?`).join(", ")} WHERE digest = ?`)
       .run(...columns.map(([, v]) => v), digest);

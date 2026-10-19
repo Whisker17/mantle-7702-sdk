@@ -15,6 +15,8 @@ import { parse } from "yaml";
  * relayer: "0x…"                      # the relayer (batch executor) address; names this sponsor
  * relayerKey: ${SPONSOR_RELAYER_KEY}  # optional; the relayer's private key, only as ${VAR}: without
  *                                     # one the sponsor decides but cannot submit
+ * paymasterSignerKey: ${SPONSOR_PAYMASTER_SIGNER_KEY}  # optional; the VerifyingPaymaster's signer
+ *                                     # key, only as ${VAR}: without one the pm_* methods refuse
  * settleTimeoutSeconds: 30            # optional; how long sponsor_relay waits for settlement
  * deployments: ../deployments/mantle-sepolia.json   # optional; default: the committed book
  * maxRequestValiditySeconds: 300      # optional; longest request validity window accepted
@@ -36,6 +38,8 @@ export interface SponsorConfig {
   relayer: Address;
   /** The environment variable holding the relayer's private key; the key itself is never kept here. */
   relayerKeyEnv?: string;
+  /** The environment variable holding the paymaster signer's private key. */
+  paymasterSignerKeyEnv?: string;
   /** How long `sponsor_relay` waits for its transaction to settle before answering `pending`. */
   settleTimeoutSeconds: number;
   addresses: AddressBook;
@@ -67,6 +71,7 @@ export function parseConfig(raw: unknown, baseDir: string): SponsorConfig {
     "database",
     "relayer",
     "relayerKey",
+    "paymasterSignerKey",
     "settleTimeoutSeconds",
     "deployments",
     "maxRequestValiditySeconds",
@@ -109,7 +114,10 @@ export function parseConfig(raw: unknown, baseDir: string): SponsorConfig {
     },
     database: resolve(baseDir, string(c.database, "database")),
     relayer: address(c.relayer, "relayer"),
-    ...(c.relayerKey === undefined ? {} : { relayerKeyEnv: envName(c.relayerKey) }),
+    ...(c.relayerKey === undefined ? {} : { relayerKeyEnv: envName(c.relayerKey, "relayerKey") }),
+    ...(c.paymasterSignerKey === undefined
+      ? {}
+      : { paymasterSignerKeyEnv: envName(c.paymasterSignerKey, "paymasterSignerKey") }),
     settleTimeoutSeconds:
       c.settleTimeoutSeconds === undefined
         ? 30
@@ -159,12 +167,13 @@ function mnt(value: unknown, field: string): bigint {
 }
 
 /** A private key is never written into the file: only `${VAR}` naming the variable that holds it. */
-function envName(value: unknown): string {
+function envName(value: unknown, field: string): string {
   const env = typeof value === "string" ? /^\$\{(\w+)\}$/.exec(value)?.[1] : undefined;
-  if (!env)
+  if (!env) {
     throw new Error(
-      "relayerKey must reference the environment variable holding the key, not be a key",
+      `${field} must reference the environment variable holding the key, not be a key`,
     );
+  }
   return env;
 }
 

@@ -1,8 +1,9 @@
+import { AsyncLocalStorage, createHook } from "node:async_hooks";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { EMBEDDED_RELAYER_KEY_ENV, startEmbeddedSponsor } from "../src/embedded.js";
 
 // Never called: an empty ledger reconciles without the chain, and no request is sent here.
@@ -45,28 +46,44 @@ describe("startEmbeddedSponsor", () => {
   it("starts the sponsor on loopback with the local key, and close leaves nothing open", async () => {
     const database = join(mkdtempSync(join(tmpdir(), "embedded-sponsor-")), "sponsor.sqlite");
     const servers = handles("TCPServerWrap");
-    const timers = handles("Timeout");
-    const sponsor = await startEmbeddedSponsor({
-      rpcUrl: DEAD_RPC,
-      allowlist,
-      database,
-      pollIntervalMs: 50,
-      env: { MANTLE_AA_EMBEDDED_RELAYER: "1", [EMBEDDED_RELAYER_KEY_ENV]: key },
-    });
+    // The sponsor's own timers: those created in its async context. A count of every Timeout in the
+    // worker would include the test runner's own. A timer that fired or was cleared is marked
+    // `_destroyed` at once; the async_hooks `destroy` callback only follows on a later loop turn.
+    const context = new AsyncLocalStorage<true>();
+    type Timer = NodeJS.Timeout & { _destroyed: boolean };
+    const timers: Timer[] = [];
+    const hook = createHook({
+      init(_id, type, _trigger, resource) {
+        if (type === "Timeout" && context.getStore()) timers.push(resource as Timer);
+      },
+    }).enable();
+    onTestFinished(() => void hook.disable());
+    const sponsorTimers = () => timers.filter((t) => t.hasRef() && !t._destroyed).length;
+    const sponsor = await context.run(true, () =>
+      startEmbeddedSponsor({
+        rpcUrl: DEAD_RPC,
+        allowlist,
+        database,
+        pollIntervalMs: 50,
+        env: { MANTLE_AA_EMBEDDED_RELAYER: "1", [EMBEDDED_RELAYER_KEY_ENV]: key },
+      }),
+    );
     expect(sponsor.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(sponsor.relayer).toBe(relayer);
     const health = await fetch(`${sponsor.url}/health`).then((r) => r.json());
     expect(health).toEqual({ status: "ok", chainId: 5003, sponsor: relayer });
-    // The open database keeps its write-ahead log; the settlement loop sleeps on a timer.
+    // The open database keeps its write-ahead log; the settlement loop sleeps on its one timer.
     expect(existsSync(`${database}-wal`)).toBe(true);
     expect(handles("TCPServerWrap")).toBe(servers + 1);
-    expect(handles("Timeout")).toBeGreaterThan(timers);
+    // Past a few polls, so the timer is one the loop armed again after a reconciliation.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(sponsorTimers()).toBe(1);
 
     await sponsor.close();
 
     // libuv frees a closed handle on a later loop turn.
     await vi.waitFor(() => expect(handles("TCPServerWrap")).toBe(servers), { timeout: 1000 });
-    expect(handles("Timeout")).toBeLessThanOrEqual(timers);
+    expect(sponsorTimers()).toBe(0);
     // SQLite removes the log when the last connection closes.
     expect(existsSync(`${database}-wal`)).toBe(false);
     await expect(fetch(`${sponsor.url}/health`)).rejects.toThrow();
