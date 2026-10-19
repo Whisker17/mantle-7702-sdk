@@ -183,6 +183,9 @@ function rpcUrl(value: unknown): string {
   const env = /^\$\{(\w+)\}$/.exec(raw)?.[1];
   const url = env ? process.env[env] : raw;
   if (!url) throw new Error(`rpcUrl: environment variable ${env} is not set`);
-  if (!/^https?:\/\//.test(url)) throw new Error("rpcUrl must be an http(s) URL");
+  // Whitespace, quotes, angle brackets, backticks and control characters end a URL for the
+  // error redaction, which would leave the rest of the URL (and a credential in it) in the text.
+  if (!/^https?:\/\//.test(url) || /[\s"'<>`\p{Cc}]/u.test(url) || !URL.canParse(url))
+    throw new Error("rpcUrl must be a well-formed http(s) URL");
   return url;
 }

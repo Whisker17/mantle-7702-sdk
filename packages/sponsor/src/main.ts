@@ -77,8 +77,11 @@ export async function startSponsor(config: SponsorConfig, options: StartSponsorO
     await paymaster?.close();
     store.close();
     // A viem error names the RPC URL, which may carry a credential, in its message, details and
-    // causes: only its redacted message goes on.
-    throw new Error(redactUrls(error instanceof Error ? error.message : String(error)));
+    // causes: only its redacted message goes on. The configured URL is replaced whole first, so a
+    // malformed one (which the generic redaction would cut short) leaves nothing behind.
+    const message = error instanceof Error ? error.message : String(error);
+    const scrubbed = config.rpcUrl ? message.replaceAll(config.rpcUrl, "<redacted-url>") : message;
+    throw new Error(redactUrls(scrubbed));
   }
 }
 
