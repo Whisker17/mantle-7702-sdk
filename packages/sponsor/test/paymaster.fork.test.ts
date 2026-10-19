@@ -174,7 +174,7 @@ describe.skipIf(!rpcUrl)("paymaster signing on a Mantle Sepolia fork", () => {
     store?.close();
     stop?.();
     delete process.env[SIGNER_ENV];
-  });
+  }, 30_000);
 
   const call = async <T>(method: string, params: unknown): Promise<Rpc<T>> => {
     const res = await fetch(sponsor.url, {

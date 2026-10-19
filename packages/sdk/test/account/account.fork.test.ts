@@ -83,7 +83,7 @@ describe.skipIf(!rpcUrl)("MantleAccount on a Mantle Sepolia fork", () => {
     ({ url, stop } = await startFork(rpcUrl as string));
     client = clientFor(url);
   }, 60_000);
-  afterAll(() => stop?.());
+  afterAll(() => stop?.(), 30_000);
 
   const keystore = (): KeystoreOptions => ({
     home: mkdtempSync(join(tmpdir(), "mantle-aa-account-")),
