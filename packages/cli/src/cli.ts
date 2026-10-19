@@ -219,8 +219,10 @@ class Context {
    * The executor for `account`'s batches, on the `--via` path. The sponsor (and the bundler) are
    * reached on first submission only: `--sponsor-url` / MANTLE_AA_SPONSOR_URL, or with
    * MANTLE_AA_EMBEDDED_RELAYER=1 an embedded sponsor (allowlisting `account`, its ledger under the
-   * profile directory) closed at exit. A batch that reverted on chain throws
-   * `ExecutionRevertedError`.
+   * profile directory) closed at exit. One embedded sponsor runs per home at a time: a command
+   * that submits while another one's embedded sponsor runs on the same home fails (exit 1, the
+   * database is in use by another running sponsor) before anything is sent. A batch that reverted
+   * on chain throws `ExecutionRevertedError`.
    */
   executor(account: Address): Executor {
     let inner: Promise<Executor> | undefined;
