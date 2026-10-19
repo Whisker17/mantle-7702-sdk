@@ -1,9 +1,10 @@
 # e2e
 
 End-to-end suites: an anvil fork of Mantle Sepolia (with a strict-mode Alto bundler for the bundler
-path), and the Mantle Sepolia acceptance script (`docs/DESIGN.md` §8, §9). Vitest collects every
-`e2e/**/*.test.ts`; like the `*.fork.test.ts` suites they skip without `MANTLE_SEPOLIA_RPC_URL`,
-and CI fails when one of them skips or passes nothing.
+path), and the Mantle Sepolia acceptance script (`docs/DESIGN.md` §8, §9; `sepolia.ts` below). Vitest collects every
+`e2e/**/*.test.ts`; like the `*.fork.test.ts` suites they skip without `MANTLE_SEPOLIA_RPC_URL`
+(except `bundler/trace-proxy.test.ts`, which needs no chain), and CI fails when one of them skips
+or passes nothing.
 
 ## `relayer/` — the relayer path
 
@@ -25,7 +26,8 @@ embedded mode (`MANTLE_AA_EMBEDDED_RELAYER=1`, no service). Each run has its own
   a deadline out of range, `recipient ≠ self`; after `session revoke`, old and new signatures, the
   re-grant of the same key and a Calibur-only re-registration of it.
 - Not covered here: a wrong paymaster (bundler path, `bundler/path.test.ts`), the MNT value
-  case, panic and the entry-point matrix (later suites and the contract tests).
+  case (`sepolia.ts`), panic (`packages/cli/test/cli.panic.fork.test.ts`, and `sepolia.ts` on the
+  real chain) and the entry-point matrix (the contract tests).
 
 ```bash
 MANTLE_SEPOLIA_RPC_URL=https://rpc.sepolia.mantle.xyz pnpm exec vitest run e2e
@@ -94,6 +96,50 @@ with `alto/safe-validator.patch`. Alto's whole dependency tree is pinned by
 - `sepolia.sh`, `trace-proxy.mjs`, `land-sepolia.ts`: the same Alto against the real chain, with
   `debug_*` traced on a local anvil fork, and the script that landed the UserOp in
   `docs/infra.md` §10.3.
+- `trace-proxy.test.ts`: with local fixtures for the upstream RPC and the tracing node, JSON-RPC
+  errors naming a credentialed URL reach Alto through `trace-proxy.mjs` with every URL redacted
+  (code and data structure kept, successful results unchanged), checked at the proxy's response and
+  in what the pinned Alto's RPC transport logs.
+
+## `sepolia.ts` — the acceptance run on Mantle Sepolia
+
+`sepolia.ts` runs `docs/DESIGN.md` §8 on the real chain and spends real testnet MNT, so it is a
+script, not a suite: Vitest does not collect it (it is not a `*.test.ts`) and CI never runs it.
+The last run's transaction links and spend are in `docs/acceptance.md`.
+
+```bash
+node --experimental-transform-types --import ./e2e/source-hooks.mjs e2e/sepolia.ts [relayer] [bundler] [value] [panic]
+```
+
+Plain Node runs the workspace sources directly: `source-hooks.mjs` resolves `@mantle-aa/*` to
+`packages/*/src` and a missing `./x.js` import to `./x.ts`, and `--experimental-transform-types`
+strips the types. No build step is needed. Run it detached (`nohup … &`, log and PID file), because a
+run takes about an hour.
+
+- Env: `MANTLE_SEPOLIA_RPC_URL`; `ACCEPTANCE_RELAYER_KEY` (the sponsor's relayer hot wallet);
+  `ACCEPTANCE_FUNDER_KEY` (a funded third-party EOA: the direct on-chain submissions, the
+  fixtures, the value case's principal and the panic gas); `PAYMASTER_SIGNER_PRIVATE_KEY` (the
+  deployed VerifyingPaymaster's `verifyingSigner`); `BUNDLER_PRIVATE_KEY` (Alto's executor, for
+  `bundler/sepolia.sh`); `ACCEPTANCE_RUN_DIR` (default `$TMPDIR/mantle-aa-acceptance`). Keys are
+  read from the environment only and never printed. `MANTLE_SEPOLIA_RPC_URL` may carry an API key:
+  the generated sponsor config names it as `${MANTLE_SEPOLIA_RPC_URL}`, and every output (stdout,
+  stderr, the results, the sponsor's and the bundler stack's logs) is scrubbed of the keys and of
+  every URL but the explorer links in `<phase>.md`, failures included.
+- Phases, each with fresh root and agent keys, so each can be rerun alone. `relayer` and `bundler`:
+  §8 steps 1–6 on that path against one `mantle-aa sponsor serve` (both keys from env; caps
+  `maxFeePerRequestMnt` 0.1, which admits init + first grant, `dailyBudgetMnt` 1,
+  `managementReserveMnt` 0.4; one database for the whole run). Same fixture, policy, three-way
+  refusals and 0-MNT checks as `relayer/relayer.test.ts` and `bundler/path.test.ts`, with the
+  on-chain submissions sent as real transactions by the funder. Without a clock to move, the
+  expired key is a second session granted with a 10-minute expiry. The bundler phase starts and
+  stops `bundler/sepolia.sh` itself; a send refused by the bundler stack (Alto's 10 s trace
+  timeout, `-32505 … unstaked`, an op never included) is recorded with Alto's log, the stack is
+  restarted where that is the remedy, and the command is retried once the sponsorship window has
+  passed and no op of the account landed. `value`: the MNT value case (relayer path).
+  `panic`: the sponsor stopped, the root funded, `account panic --self-pay --undelegate`.
+- Results in the run directory: `<phase>.jsonl` (every step, refusal and transaction with its fee),
+  `<phase>.md` (the same as a table of explorer links) and `summary.json` (commit, balances before
+  and after each phase).
 
 `spike/userop.sh` is the 0.1.0 spike's UserOp builder. It signs in SpikePaymaster's layout, so it
 does not work with the deployed paymaster.

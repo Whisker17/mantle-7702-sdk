@@ -67,7 +67,7 @@ describe.skipIf(!rpcUrl)("AgentSession on a Mantle Sepolia fork", () => {
     ({ url, stop } = await startFork(rpcUrl as string));
     client = clientFor(url);
   }, 60_000);
-  afterAll(() => stop?.());
+  afterAll(() => stop?.(), 30_000);
 
   it("executes passing batches and rejects each violation locally without sending", async () => {
     const relayer = new TestRelayer(url, book);

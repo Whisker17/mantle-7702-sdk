@@ -110,11 +110,14 @@ export class Ledger {
   }
 
   /**
-   * Reconciles with the chain: a request reserved but never signed is released; a submitted one is
-   * settled from its receipt, or sent again if the node no longer holds it. Then keeps settling in
-   * the background until `close`. Only the process that submits calls this.
+   * Claims the database as its one submitting sponsor (`SponsorStore.claimSubmitter`; throws while
+   * another running sponsor holds it), then reconciles with the chain: a request reserved but never
+   * signed is released, since no other sponsor can be signing it; a submitted one is settled from
+   * its receipt, or sent again if the node no longer holds it. Then keeps settling in the
+   * background until `close`. Only the process that submits calls this.
    */
   async start(): Promise<void> {
+    this.#store.claimSubmitter();
     const foreign = this.#store
       .entries(["submitted"])
       .flatMap((e) => this.#store.attempts(e.digest))
@@ -313,11 +316,15 @@ export class Ledger {
       } catch {
         return this.#release(request.digest, "the relayer could not prepare the transaction");
       }
-      // Persisted before it is sent, so a restart finds every nonce this relayer may have used.
-      this.#store.transaction(() => {
+      // Persisted before it is sent, so a restart finds every nonce this relayer may have used;
+      // never sent if its reservation is gone (the nonce stays free, the result stays released).
+      const reserved = this.#store.transaction(() => {
+        if (this.#store.entry(request.digest)?.state !== "reserved") return false;
         this.#store.insertAttempt(attempt);
         this.#store.updateEntry(request.digest, { state: "submitted", nonce: attempt.nonce });
+        return true;
       });
+      if (!reserved) return;
       try {
         await broadcast(this.#client, attempt.raw);
       } catch (error) {

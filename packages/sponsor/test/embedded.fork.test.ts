@@ -84,7 +84,7 @@ describe.skipIf(!rpcUrl)("the embedded sponsor on a Mantle Sepolia fork", () => 
     stop?.();
     delete process.env.MANTLE_AA_EMBEDDED_RELAYER;
     delete process.env.MANTLE_AA_RELAYER_KEY;
-  });
+  }, 30_000);
 
   it("initialises an account with its first grant through the embedded sponsor", async () => {
     expect(sponsor.relayer).toBe(RELAYER_ADDRESS);

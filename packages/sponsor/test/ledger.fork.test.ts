@@ -144,7 +144,7 @@ describe.skipIf(!rpcUrl)("sponsor ledger and relayer on a Mantle Sepolia fork", 
   afterAll(async () => {
     await shutdown().catch(() => undefined);
     stop?.();
-  });
+  }, 30_000);
 
   const post = async (params: unknown): Promise<Rpc> => {
     const res = await fetch(base, {
@@ -356,8 +356,8 @@ describe.skipIf(!rpcUrl)("sponsor ledger and relayer on a Mantle Sepolia fork", 
   }, 120_000);
 
   describe("with mining paused", () => {
-    beforeAll(() => rpc("evm_setAutomine", [false]));
-    afterAll(() => rpc("evm_setAutomine", [true]));
+    beforeAll(() => rpc("evm_setAutomine", [false]), 30_000);
+    afterAll(() => rpc("evm_setAutomine", [true]), 30_000);
 
     it("status shows the pending transaction; bump reserves the extra first and settles by the replacement", async () => {
       const sent = await submitUnmined(await sessionRequest(agents[0] as never, [approve(11n)]));

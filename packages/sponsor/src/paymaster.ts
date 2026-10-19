@@ -396,10 +396,13 @@ export class PaymasterLedger implements PaymasterIssuer {
   }
 
   /**
-   * Checks the key is the paymaster's `verifyingSigner` (every signature would fail `AA34`
-   * otherwise), reconciles what a previous process left open, then keeps reconciling until `close`.
+   * Claims the database as its one submitting sponsor (`SponsorStore.claimSubmitter`), checks the
+   * key is the paymaster's `verifyingSigner` (every signature would fail `AA34` otherwise),
+   * reconciles what a previous process left open, then keeps reconciling until `close`. A
+   * sponsorship is released only on chain evidence (`reconcile`), never for being open at start-up.
    */
   async start(): Promise<void> {
+    this.#store.claimSubmitter();
     const onChain = await readContract(this.#client, {
       address: this.#config.addresses.verifyingPaymaster,
       abi: verifyingPaymasterAbi,

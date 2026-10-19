@@ -54,7 +54,9 @@ export interface EmbeddedSponsorOptions {
  * ephemeral loopback port and paying with a local relayer key from the environment (and, given a
  * paymaster signer key, signing UserOps for the `pm_*` methods). Hand `url` to `RelayerExecutor`
  * or use it as the ERC-7677 paymaster service. Refuses to start unless
- * `MANTLE_AA_EMBEDDED_RELAYER=1`. `close` leaves no listener, timer or open database behind.
+ * `MANTLE_AA_EMBEDDED_RELAYER=1`, and while another sponsor runs on the same `database` file (one
+ * submitting sponsor per database: `SponsorStore.claimSubmitter`); it does not wait for it. `close`
+ * leaves no listener, timer or open database behind.
  */
 export async function startEmbeddedSponsor(options: EmbeddedSponsorOptions) {
   const env = options.env ?? process.env;
