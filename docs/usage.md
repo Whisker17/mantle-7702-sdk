@@ -1,9 +1,9 @@
 # Using mantle-7702-sdk
 
 What the [quick start](../README.md#quick-start-mantle-sepolia) does not cover: the root's other
-operations, running a sponsor, the bundler path, the SDK from TypeScript, consuming the packages
-from another project, what a launchpad must satisfy, and the known limits. Everything here is a
-proof of concept on Mantle Sepolia; the contracts are not audited.
+operations, running a sponsor, the bundler path, the SDK from TypeScript, installing the packages
+from npm, what a launchpad must satisfy, and the known limits. Everything here is a proof of
+concept on Mantle Sepolia; the contracts are not audited.
 
 ## Who does what
 
@@ -59,7 +59,7 @@ for the bundler path, and `GET /health`. It runs until SIGINT or SIGTERM. Client
 | `relayerKey` | no | | `${VAR}`: the variable holding the relayer's key. Without it the sponsor decides but cannot submit |
 | `paymasterSignerKey` | no | | `${VAR}`: the key of the VerifyingPaymaster's `verifyingSigner`, checked at start. Without it the `pm_*` methods refuse |
 | `settleTimeoutSeconds` | no | 30 | How long `sponsor_relay` waits for the transaction before answering `pending` (the client then polls) |
-| `deployments` | no | the committed book | Path to another address book |
+| `deployments` | no | the Mantle Sepolia book the SDK ships | Path to another address book |
 | `maxRequestValiditySeconds` | no | 300 | The longest request validity window accepted |
 | `policy.allowlist` | yes | | The accounts paid for (quoted addresses) |
 | `policy.accountDailyGas` | yes | | Gas per account per UTC day, per budget class |
@@ -136,7 +136,8 @@ as an ERC-4337 v0.8 UserOperation. The sponsor must have `paymasterSignerKey`; t
 VerifyingPaymaster pays from its EntryPoint deposit. `account init` carries the EIP-7702
 authorization in the UserOp (`eip7702Auth`); session UserOps never do.
 
-There is no public bundler for EntryPoint v0.8 on Mantle Sepolia, so the repository runs its own:
+There is no public bundler for EntryPoint v0.8 on Mantle Sepolia, so the repository runs its own.
+It is not in the npm packages; run it from a clone (no build needed):
 `e2e/bundler/sepolia.sh up|down|status` starts Alto 0.0.21 in safe mode (full ERC-7562 validation)
 with a patch, against the real chain, and traces validation on a local anvil fork because the
 public RPC refuses `debug_*`. It needs `anvil`, `npm` (Alto is installed from
@@ -174,7 +175,7 @@ import {
 } from "@0xwh1sker/mantle-aa-sdk";
 import { createPublicClient, encodeFunctionData, erc20Abi, type Hex, http, parseAbi } from "viem";
 
-const addresses = loadDeployments(); // the committed Mantle Sepolia address book
+const addresses = loadDeployments(); // the Mantle Sepolia address book the SDK ships
 const client = createPublicClient({
   chain: getChain(addresses.chainId),
   transport: http(process.env.MANTLE_AA_RPC_URL),
@@ -237,33 +238,47 @@ console.log(await account.status());
 the sponsor itself (`loadConfig`, `startSponsor`, `startEmbeddedSponsor`) for running it in
 process. The signatures are in `packages/sdk/src/` (`docs/DESIGN.md` §5.1 is the design).
 
-## Consuming the packages
+## Installing the packages
 
 `@0xwh1sker/mantle-aa-sdk`, `@0xwh1sker/mantle-aa-sponsor` and `@0xwh1sker/mantle-aa-cli` are
-private and not published. Use them from a clone of this repository, built, through pnpm `link:`
-dependencies:
+published to npm under the owner's `@0xwh1sker` scope, MIT-licensed. Each needs Node 24 or
+later. Like the rest of this repository they are a proof of concept for Mantle Sepolia only, and
+the contracts they drive are not audited: do not use them with real funds.
 
 ```bash
-git clone git@github.com:Whisker17/mantle-7702-sdk.git ../mantle-7702-sdk   # or check out a tag
+npm i @0xwh1sker/mantle-aa-sdk viem       # the SDK; viem is a peer dependency
+npm i @0xwh1sker/mantle-aa-sponsor        # only to run a sponsor in process
+npm i -g @0xwh1sker/mantle-aa-cli         # the mantle-aa command
+npx -y @0xwh1sker/mantle-aa-cli --help    # or run the CLI without installing it
+```
+
+- **The SDK** takes `viem` as a peer dependency, so your project and the SDK share one copy: the
+  SDK works on your viem clients, and with two copies TypeScript rejects them as a different type.
+  It ships the Mantle Sepolia address book, so `loadDeployments()` works without arguments;
+  `loadDeployments(<path>)` reads another book.
+- **The sponsor** exports `loadConfig`, `startSponsor` and `startEmbeddedSponsor` for running it
+  in your own process. To run it as a service, `mantle-aa sponsor serve` is the same sponsor.
+- **The CLI** provides the `mantle-aa` command.
+
+Not in any package: the self-hosted bundler stack ([the bundler path](#the-bundler-path):
+`e2e/bundler/sepolia.sh` with its pinned Alto), the contracts and the end-to-end suites. They are
+in this repository only.
+
+### From a clone (contributors)
+
+To use unreleased changes, build a clone and depend on it through pnpm `link:` dependencies:
+
+```bash
+git clone https://github.com/Whisker17/mantle-7702-sdk.git ../mantle-7702-sdk   # or check out a tag
 (cd ../mantle-7702-sdk && pnpm install --frozen-lockfile && pnpm build)
 pnpm add link:../mantle-7702-sdk/packages/sdk link:../mantle-7702-sdk/node_modules/viem
 pnpm add link:../mantle-7702-sdk/packages/sponsor           # only to run a sponsor in process
 ```
 
-Link `viem` from the clone as well, rather than installing your own copy: the SDK takes viem
-clients, and with two copies of viem TypeScript rejects your client as a different type (the
-code runs either way). Rebuild the clone (`pnpm build`) after pulling. A linked package finds the
-default address book in the clone's `deployments/`.
-
-Two forms do not work with this repository, so do not use them:
-
-- **A git dependency** (`pnpm add "git+ssh://git@github.com/Whisker17/mantle-7702-sdk.git#<ref>&path:/packages/sdk"`)
-  installs the package's sources without `dist/` (nothing builds it), so importing it fails with
-  `ERR_MODULE_NOT_FOUND`.
-- **A `file:` dependency** copies the package out of the clone: the SDK then cannot find
-  `deployments/mantle-sepolia.json` (pass `loadDeployments(<path>)` everywhere to work around it),
-  and `@0xwh1sker/mantle-aa-sponsor` does not install at all, because its `workspace:*` dependency
-  on the SDK resolves only inside this workspace.
+Link `viem` from the clone as well, for the same reason as the peer dependency above. Rebuild the
+clone (`pnpm build`) after pulling. A git dependency on this repository or a `file:` dependency on
+a clone does not work: the first installs the sources without `dist/`, and with either, the
+sponsor's and the CLI's `workspace:*` dependencies on the SDK resolve only inside this workspace.
 
 ## For launchpad builders
 
