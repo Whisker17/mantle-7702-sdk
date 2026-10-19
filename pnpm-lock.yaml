@@ -33,11 +33,11 @@ importers:
         specifier: workspace:*
         version: link:../sponsor
       viem:
-        specifier: 2.57.7
+        specifier: ^2.57.7
         version: 2.57.7(typescript@7.0.2)
 
   packages/sdk:
-    dependencies:
+    devDependencies:
       viem:
         specifier: 2.57.7
         version: 2.57.7(typescript@7.0.2)
@@ -48,7 +48,7 @@ importers:
         specifier: workspace:*
         version: link:../sdk
       viem:
-        specifier: 2.57.7
+        specifier: ^2.57.7
         version: 2.57.7(typescript@7.0.2)
       yaml:
         specifier: 2.9.1

@@ -1,7 +1,12 @@
 # @0xwh1sker/mantle-aa-cli
 
-The `mantle-aa` command (docs/DESIGN.md §6). Build with `pnpm build`; run `node packages/cli/dist/bin.js`
-(the package's `bin` is `mantle-aa`). `mantle-aa --help` lists the commands.
+The `mantle-aa` command (docs/DESIGN.md §6). Install it with `npm i -g @0xwh1sker/mantle-aa-cli`
+(Node 24 or later), or run it without installing: `npx -y @0xwh1sker/mantle-aa-cli <args>`. From a
+clone, `pnpm build` and run `node packages/cli/dist/bin.js`. `mantle-aa --help` lists the commands.
+
+> **Proof of concept. The contracts are not audited.** Mantle Sepolia (chain 5003) only. Do not
+> use it with real funds. The quick start and the usage guide are in
+> [the repository](https://github.com/Whisker17/mantle-7702-sdk).
 
 ## Settings
 

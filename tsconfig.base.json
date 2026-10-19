@@ -12,6 +12,7 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "declaration": true,
-    "sourceMap": true
+    // The packages ship dist/ without src/: source maps would point at files that are not there.
+    "sourceMap": false
   }
 }

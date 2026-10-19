@@ -1,7 +1,23 @@
 {
   "name": "@0xwh1sker/mantle-aa-sponsor",
   "version": "0.1.3",
-  "private": true,
+  "description": "The gas sponsor for @0xwh1sker/mantle-aa-sdk accounts on Mantle: a JSON-RPC relayer and an ERC-7677 paymaster service with per-account budgets.",
+  "keywords": [
+    "mantle",
+    "eip-7702",
+    "erc-4337",
+    "erc-7677",
+    "account-abstraction",
+    "paymaster",
+    "relayer",
+    "gas-sponsorship"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Whisker17/mantle-7702-sdk.git",
+    "directory": "packages/sponsor"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -9,13 +25,23 @@
       "default": "./dist/index.js"
     }
   },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "prepack": "pnpm run build",
     "start": "node dist/main.js"
   },
   "dependencies": {
     "@0xwh1sker/mantle-aa-sdk": "workspace:*",
-    "viem": "2.57.7",
+    "viem": "^2.57.7",
     "yaml": "2.9.1"
   }
 }
