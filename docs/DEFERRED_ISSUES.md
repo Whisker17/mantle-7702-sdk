@@ -132,7 +132,7 @@ tests or CI.
   reconciliation is covered by the ledger fork tests. Fix: start the built `mantle-aa` binary as a
   child process (with a bounded start-up wait and kill on teardown). Revisit with a sponsor
   deployment or process-lifecycle change.
-- **The CI `typescript` job uses most of its 20-minute timeout** (Medium, #20, #26).
+- **The CI `typescript` job uses most of its 20-minute timeout** (Medium, #20, #26, #41).
   `.github/workflows/ci.yml` job `typescript` (`timeout-minutes: 20`) runs every fork suite
   against the public `https://rpc.sepolia.mantle.xyz`. Measured: 15m04s on `ed2b043`, 12m51s on
   `55cff0c` and 12m40s on `2ffe201`. Public-RPC latency can push it over the limit and make the
@@ -140,6 +140,17 @@ tests or CI.
   time. Fix: raise the timeout, or split the fork suites into their own job. Either is a
   `.github/workflows/` change, which is repo-wide governance, so it goes in a separate PR to
   `dev`. Revisit before the bundler E2E lands, or when the job passes ~17 minutes.
+  Update at the 0.1.2 release review: #32 moved the `e2e/` suites into their own `e2e` job
+  (`timeout-minutes: 30`), but the `typescript` job still runs every other fork suite, and after
+  the bundler suites landed it took 11.6–14.0 min on three runs of one commit and 14.8 min on the
+  0.1.2 candidate (`docs/infra.md` §10.6). Accepted again because those runs passed. A fix that
+  needs no workflow change: the SDK suites' shared fork helper
+  `packages/sdk/test/account/fork.ts::startFork` starts anvil with `--hardfork prague` and does
+  not zero the EIP-2935/EIP-4788 ring buffers, so on anvil 1.8.5 (CI's) every block it mines
+  first reads three storage slots from the public RPC. #41 removed exactly that cost from the
+  bundler harness (`e2e/bundler/harness.ts::localSystemRings`). Applying it to `startFork` would
+  give margin; it carries the test-fidelity caveat of the harness entry below. Revisit when the
+  job passes ~17 minutes again, or with the next change to `fork.ts`.
 - **The fee-bound test does not record where its oracle values come from** (Low, #27).
   `packages/sponsor/test/fees.test.ts::SPIKE`: the `oracle.l1FeeUpperBound` values for sizes
   2076 (type-4 grant, 79 885) and 860 (session call, 33 812) were not measured by the 0.1.0
@@ -149,6 +160,114 @@ tests or CI.
   value. Without the block numbers, a later change cannot tell an oracle-parameter update from a
   size change. Fix: one comment next to `SPIKE` naming both blocks and the query. Revisit the next
   time `fees.test.ts` or `relayerFeeBound` changes.
+
+The next nine entries were accepted at the 0.1.2 release review (candidate `bd19e2d`). Both review
+rounds judged them non-blocking for the testnet POC, and 0.1.2 shipped with them. The tenth item
+of that review, the CI `typescript` job's margin, is the update to the CI entry above. Cross-lane
+nonce consumption, also accepted there, is a known Calibur limitation already recorded in
+`docs/DESIGN.md` §4.1 and `e2e/README.md` (`bundler/`, cross-lane consumption), so it has no
+entry here. None of the nine weakens an on-chain invariant of `docs/DESIGN.md` §4.2.5.
+
+- **A sponsorship issued for one session key can be used by another key of the same account**
+  (Medium, #34). `packages/sponsor/src/paymaster.ts::paymasterHash` /
+  `contracts/src/VerifyingPaymaster.sol::getHash`: the paymaster signature covers the UserOp's
+  fields (nonce, callData, gas, fees, validity) but not the account signature, because under
+  ERC-7677 the account signs after sponsorship (`docs/DESIGN.md` §4.3). The sponsor authenticates
+  the request with key A and checks A's lane (`decodeUserOp`, `auth.ts::checkLane`), but on chain
+  Calibur binds neither the nonce lane nor the paymaster data to the signing key. Another key B
+  registered on the account can sign the same sponsored op as `abi.encode(B's keyHash, sig, …)`
+  and send it. B's own hook policy applies in validation and execution: calls B may not make
+  revert (the sponsor pays for a reverted execution), calls B may make were open to B anyway. The
+  cost stays within A's reservation and is charged to it (`PaymasterLedger#settle`: A's request,
+  account and budget class), and A's op then fails on the consumed nonce. Accepted because the
+  sponsor is not a security boundary (`docs/DESIGN.md` §4.0), the on-chain policy still holds,
+  and only attribution and one sponsored fee are at stake. A fix needs the paymaster to bind the
+  key, e.g. the keyHash in the paymaster data and a paymaster check of the signature's key, which
+  means redeploying the paymaster and the hook bound to it. Revisit before mainnet, or if
+  per-key sponsorship budgets are introduced.
+- **An unsent sponsorship holds the account's single in-flight slot until its `validUntil`**
+  (Low, #34). `packages/sponsor/src/paymaster.ts::PaymasterLedger.sponsor` reserves when it signs;
+  `PaymasterLedger.reconcile` releases an entry only once a searched block's timestamp is past
+  its `validUntil`, and `sponsorUserOp` refuses every other request of the account with
+  `SPONSOR_BUSY` until then (the on-demand reconcile from #37 does not help, because the op could
+  still be included). A client that obtains paymaster data and never sends the op, or whose send
+  the bundler refuses, blocks the account for the rest of the window: 60 s from the SDK
+  (`packages/sdk/src/executors/bundler.ts::BundlerExecutorOptions.validitySeconds`), up to
+  `maxRequestValiditySeconds` (default 300 s) for another client. Accepted because the window is
+  short and bounded, and releasing earlier would let the sponsor pay for an op it no longer
+  tracks. Fix: a request-signed cancel that releases a reservation whose op the bundler never
+  accepted, or a shorter sponsor-side cap on the window. Revisit if clients see `SPONSOR_BUSY`
+  after abandoned sends.
+- **Paymaster settlement takes the first `UserOperationEvent`, with no confirmation depth**
+  (Medium, #34). `packages/sponsor/src/paymaster.ts::PaymasterLedger.reconcile` /
+  `PaymasterLedger#settle`: the first `UserOperationEvent` found for the op's userOpHash settles
+  the entry at once, with its `actualGasCost`, and the result is final; a reorg that drops or
+  replaces that bundle afterwards is never seen. Same defect, reason and revisit condition as
+  the relayer entry above (`Ledger.reconcile`); fix both together: settle only after N
+  confirmations.
+- **`DeployPaymaster.verify` checks the paymaster's configuration, not its bytecode or exact
+  owner** (Low, #7). `contracts/script/DeployPaymaster.s.sol::verify` checks code presence, the
+  EntryPoint, `verifyingSigner`, `CALIBUR_ENTRY`, owner ≠ signer and the minimum deposit. It does
+  not compare the runtime code hash with `deployments/mantle-sepolia.json`
+  (`VerifyingPaymaster.runtimeCodeHash`) or the owner with the recorded `owner`, so a different
+  contract exposing the same getters would pass. `DeployHook.s.sol` already checks its recorded
+  `runtimeCodeHash`. Raised at the 0.1.0 release review; accepted because the deployed
+  paymaster's runtime hash and owner were checked against the book independently then, and no
+  contract changed since. Fix: add both checks against the address book, as `DeployHook.s.sol`
+  does. Revisit at the next paymaster deployment, or before mainnet.
+- **The documented example per-request fee cap is below the init + first grant worst case** (Medium,
+  #19, #23). `packages/sponsor/src/config.ts` (the config example in the module comment) gives
+  `maxFeePerRequestMnt: "0.05"`, and `policy.maxFeePerRequestMnt` is required, with no default.
+  The root's init with the first grant bounds at about 0.055 MNT on Mantle Sepolia
+  (`packages/sponsor/src/embedded.ts::EMBEDDED_POLICY_DEFAULTS`, whose cap is 0.5), so a
+  sponsor configured from the example refuses that request on both paths. The fork tests raise
+  the cap (`relayer-executor.fork.test.ts`, `bundler-executor.fork.test.ts`,
+  `cli.bundler.fork.test.ts`). Accepted because every tested configuration sets a larger cap and
+  the refusal is a structured rejection, not a loss; the review called it a real usability
+  risk for deployments that copy the example. Fix: raise the example to cover init + grant with
+  margin (e.g. `"0.1"`), or say next to it that init + grant needs more than 0.05. Revisit before
+  a sponsor is deployed from the documented config.
+- **The self-hosted bundler's executor loses about 20 % per bundle on Mantle** (Low, #33).
+  `docs/infra.md` §10.4: the EntryPoint refunds the bundle executor the op's `actualGasCost`,
+  which does not include Mantle's operator fee, and Alto 0.0.21 bids
+  `maxPriorityFeePerGas = maxFeePerGas`; the measured Sepolia bundle cost the executor 19.9 % more
+  than it was refunded (−0.002378829 MNT). Closing it would take PVG at about 1.58× Alto's
+  estimate. Accepted because one
+  operator funds both the executor and the paymaster deposit, so raising PVG would only move the
+  same MNT, and would add a PVG formula the paymaster signer must also price. Revisit before a
+  mainnet or third-party bundler.
+- **Alto 0.0.21 never drops an op that fails its pre-bundle re-validation, which can throttle
+  the unstaked paymaster** (Medium, #40, #41). Upstream `Mempool.shouldSkip` (`docs/infra.md`
+  §10.6, mechanism 2) re-queues such an op forever; every pass lowers the sender's and the
+  paymaster's reputation, until Alto refuses ops naming the deployed VerifyingPaymaster with
+  `-32505 … is unstaked`, and with it every account the sponsor serves, until Alto restarts. A
+  sponsorship window that lapses while the op waits is enough to trigger it. Accepted because the
+  fork harness removed the slowness that let windows lapse (`e2e/bundler/harness.ts`), a stalled
+  suite fails at its bounded receipt wait with Alto's log, and the fix is upstream (draft report
+  in `docs/infra.md` §10.6). It is an operational risk for the Mantle Sepolia acceptance run.
+  Options: stake the paymaster, run a bundler with the fix, watch for `2nd Validation error` in
+  its log. Revisit before the Sepolia acceptance, or when Alto releases a fix.
+- **After a late bundler refusal, `BundlerExecutor.submit` waits out its whole receipt bound**
+  (Low, #35). `packages/sdk/src/executors/bundler.ts::BundlerExecutor.submit` sets
+  `validUntil = min(now + validitySeconds (60 s), request.deadline)` when `submit` starts, so the
+  sponsor and bundler round trips before the send use up part of the window. If the bundler
+  accepts the op and its re-validation then fails because the window passed (the Alto loop
+  above), the op can never be included and has no rejected status, but the receipt loop keeps
+  polling until `timeoutMs` (default 120 s) and then throws `not included after …`. Accepted
+  because the wait is bounded and the error names the userOpHash. Fix: stop polling once the
+  chain's time passes `validUntil`, and/or start the window at `pm_getPaymasterData`. Revisit
+  with the next change to `BundlerExecutor`, or if callers hit the 120 s wait.
+- **The bundler fork harness differs from a live chain in three ways the suites do not cover**
+  (Low, #41). `e2e/bundler/harness.ts::localSystemRings` zeroes the EIP-2935 block-hash and
+  EIP-4788 beacon-root ring buffers on the fork, so a read of either system contract for a block
+  before the fork returns zero; `startFork` mines a block every second besides one per
+  transaction (`--block-time 1 --mixed-mining`), and `startBundlerStack` gives Alto three
+  executors (`EXECUTORS`), which hides Alto's wait for a free executor wallet (`docs/infra.md`
+  §10.6, mechanism 1) that a one-executor bundler such as `e2e/bundler/sepolia.sh` still has.
+  Accepted because no account, hook, EntryPoint or paymaster path reads historical block hashes
+  or beacon roots, each block writes its real values, and the changes made the suites
+  deterministic. Revisit if a contract or test starts reading historical system-contract values,
+  or when an operated bundler with a single executor is used.
 
 ---
 
