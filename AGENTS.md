@@ -61,21 +61,22 @@ Mirrors `docs/DESIGN.md` §3:
   `BasePaymaster`), test mocks (MockUSD, MockLaunchpad, MemeToken), deployment scripts.
   Calibur v1.1.0 (`CaliburEntry`) and account-abstraction v0.8.0 are dependencies, not
   forks.
-- **`packages/sdk`** — `@mantle-aa/sdk` (private): account and session management, local
+- **`packages/sdk`** — `@0xwh1sker/mantle-aa-sdk`: account and session management, local
   policy simulation, `RelayerExecutor` and `BundlerExecutor`, keystore signer.
-- **`packages/cli`** — `@mantle-aa/cli` (private): the `mantle-aa` command; every command
+- **`packages/cli`** — `@0xwh1sker/mantle-aa-cli`: the `mantle-aa` command; every command
   supports `--json` and semantic exit codes (`docs/DESIGN.md` §6).
-- **`packages/sponsor`** — the sponsor service: request authentication, sponsorship
-  policy, reservation ledger, relayer submission, ERC-7677 paymaster signing; also runs
-  embedded in the CLI for tests and local demos.
+- **`packages/sponsor`** — `@0xwh1sker/mantle-aa-sponsor`: the sponsor service: request
+  authentication, sponsorship policy, reservation ledger, relayer submission, ERC-7677
+  paymaster signing; also runs embedded in the CLI for tests and local demos.
 - **`deployments/`** — committed address books (`mantle-sepolia.json`).
 - **`e2e/`** — end-to-end suites (anvil fork + strict-mode Alto) and, from 0.1.3, the Sepolia
   acceptance script.
 
-Packages are private and not published, and a git dependency does not work (it installs the
-sources without `dist/`). Consume them from a built clone of this repository through pnpm
-`link:` dependencies (`pnpm add link:<clone>/packages/sdk`), linking `viem` from the clone as
-well; a linked SDK reads the address book from the clone's `deployments/`.
+The three packages are published to npm under the `@0xwh1sker` scope (MIT): consumers run
+`npm i @0xwh1sker/mantle-aa-sdk viem` (`viem` is a peer dependency) and get the CLI with
+`npm i -g @0xwh1sker/mantle-aa-cli`. Contributors using unreleased changes depend on a built
+clone through pnpm `link:` dependencies instead. Both paths: `docs/usage.md` § Installing the
+packages.
 
 ## Chain access and secrets
 
