@@ -714,6 +714,8 @@ Also:
 - The 0.1.0 contract review checkpoint is `docs/reviews/0.1.0.md` (High 0 / Medium 0 /
   Low 1 / Info 3). Its SR-02 (`approveNative(ERC20ETH, 0)` in init) and SR-03 (atomic
   hooked grant) are SDK preconditions of I8 and I6.
+- The 0.1.3 final security review is `docs/reviews/0.1.3.md` (High 0 / Medium 1 / Low 1 /
+  Info 0, on `ac975ec`); its SR3-01 and SR3-02 were fixed afterwards (#52, #53).
 
 ## 10. Risks and open items
 
