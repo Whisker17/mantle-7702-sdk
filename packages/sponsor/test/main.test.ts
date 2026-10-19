@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 import { generatePrivateKey } from "viem/accounts";
 import { describe, expect, it } from "vitest";
-import { main } from "../src/main.js";
+import { loadConfig } from "../src/config.js";
+import { main, startSponsor } from "../src/main.js";
 
 // A synthetic credential marker: never a real key. Nothing listens on port 1, so the paymaster's
 // signer check at startup fails on the RPC call.
@@ -15,6 +16,12 @@ const URLS = [
   ["userinfo", `http://user:${MARKER}@127.0.0.1:1`],
   ["a path token", `http://127.0.0.1:1/v2/${MARKER}`],
   ["a query token", `http://127.0.0.1:1/rpc?apikey=${MARKER}`],
+] as const;
+// Malformed: the generic URL redaction stops at the whitespace, before the marker.
+const MALFORMED = [
+  ["whitespace before a path token", `http://exa mple.invalid/v2/${MARKER}`],
+  ["whitespace before a query token", `http://127.0.0.1:1/rpc ?apikey=${MARKER}`],
+  ["a quote before a path token", `http://127.0.0.1:1/v2/"${MARKER}`],
 ] as const;
 const ENTRY = fileURLToPath(new URL("../dist/main.js", import.meta.url));
 
@@ -92,6 +99,67 @@ describe("sponsor startup errors", () => {
       clearTimeout(timer);
       expect(output).not.toContain(MARKER);
       expect(output).toContain("<redacted-url>");
+      expect(code).toBe(1);
+    },
+    60_000,
+  );
+
+  it.each(MALFORMED)("loading a config refuses an RPC URL with %s without echoing it", (_, url) => {
+    const { path, env } = config(url);
+    Object.assign(process.env, env);
+    try {
+      const error = (() => {
+        try {
+          loadConfig(path);
+        } catch (e) {
+          return e;
+        }
+      })();
+      expect(error).toBeInstanceOf(Error);
+      for (const text of forms(error)) expect(text).not.toContain(MARKER);
+    } finally {
+      for (const key of Object.keys(env)) delete process.env[key];
+    }
+  });
+
+  // A config built in code skips the file's validation: the configured URL itself is redacted.
+  it.each(MALFORMED)(
+    "startSponsor's error never carries an RPC URL with %s",
+    async (_, url) => {
+      const { path, env } = config("http://127.0.0.1:1");
+      Object.assign(process.env, env);
+      try {
+        const sponsorConfig = { ...loadConfig(path), rpcUrl: url };
+        const error = await startSponsor(sponsorConfig).then(
+          (s) => s.close().then(() => undefined),
+          (e: unknown) => e,
+        );
+        expect(error).toBeInstanceOf(Error);
+        for (const text of forms(error)) expect(text).not.toContain(MARKER);
+      } finally {
+        for (const key of Object.keys(env)) delete process.env[key];
+      }
+    },
+    60_000,
+  );
+
+  it.each(MALFORMED)(
+    "the standalone sponsor's stderr never carries an RPC URL with %s",
+    async (_, url) => {
+      expect(existsSync(ENTRY), `${ENTRY} is missing: run pnpm build first`).toBe(true);
+      const { path, env } = config(url);
+      const child = spawn(process.execPath, [ENTRY, "--config", path], {
+        env: { ...process.env, ...env },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let output = "";
+      child.stdout.on("data", (d: Buffer) => (output += d));
+      child.stderr.on("data", (d: Buffer) => (output += d));
+      const timer = setTimeout(() => child.kill("SIGKILL"), 45_000);
+      const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
+      clearTimeout(timer);
+      expect(output).toContain("sponsor: ");
+      expect(output).not.toContain(MARKER);
       expect(code).toBe(1);
     },
     60_000,
