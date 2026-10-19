@@ -116,7 +116,10 @@ run takes about an hour.
   fixtures, the value case's principal and the panic gas); `PAYMASTER_SIGNER_PRIVATE_KEY` (the
   deployed VerifyingPaymaster's `verifyingSigner`); `BUNDLER_PRIVATE_KEY` (Alto's executor, for
   `bundler/sepolia.sh`); `ACCEPTANCE_RUN_DIR` (default `$TMPDIR/mantle-aa-acceptance`). Keys are
-  read from the environment only and never printed; outputs are scrubbed of them.
+  read from the environment only and never printed. `MANTLE_SEPOLIA_RPC_URL` may carry an API key:
+  the generated sponsor config names it as `${MANTLE_SEPOLIA_RPC_URL}`, and every output (stdout,
+  stderr, the results, the sponsor's and the bundler stack's logs) is scrubbed of the keys and of
+  every URL but the explorer links in `<phase>.md`, failures included.
 - Phases, each with fresh root and agent keys, so each can be rerun alone. `relayer` and `bundler`:
   §8 steps 1–6 on that path against one `mantle-aa sponsor serve` (both keys from env; caps
   `maxFeePerRequestMnt` 0.1, which admits init + first grant, `dailyBudgetMnt` 1,

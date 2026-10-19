@@ -10,6 +10,9 @@
 // the warm fork is reused: a fresh fork fetches every touched account and slot lazily from the
 // upstream RPC, which can exceed Alto's fixed 10 s RPC timeout (measured on 2026-10-18).
 //
+// The upstream URL may carry an API key: an error the trace node reports (it may name the fork
+// URL) is passed on and logged with every URL redacted, and the upstream is never logged.
+//
 // Env: UPSTREAM_RPC_URL (default https://rpc.sepolia.mantle.xyz),
 //      TRACE_RPC_URL (anvil, default http://127.0.0.1:18545), PORT (default 18546),
 //      FORK_MAX_AGE_S (default 120).
@@ -22,6 +25,11 @@ const port = Number(process.env.PORT ?? 18546);
 const maxForkAgeMs = Number(process.env.FORK_MAX_AGE_S ?? 120) * 1000;
 /** When the trace node was last forked, its block, and whether a bundle went out since. */
 let fork = { at: 0, block: 0n, dirty: true };
+/**
+ * Every URL becomes `<redacted-url>`, as redactUrls in packages/sdk/src/errors.ts, except that a
+ * backslash ends the URL too: the text may be JSON, whose escapes must survive.
+ */
+const redact = (text) => text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`\\]+/gi, "<redacted-url>");
 
 async function post(url, payload) {
   const res = await fetch(url, {
@@ -42,7 +50,7 @@ async function freshTraceNode() {
     method: "anvil_reset",
     params: [{ forking: { jsonRpcUrl: upstream } }],
   });
-  if (out.error) throw new Error(`anvil_reset failed: ${JSON.stringify(out.error)}`);
+  if (out.error) throw new Error(`anvil_reset failed: ${redact(JSON.stringify(out.error))}`);
   const head = await post(traceNode, {
     jsonrpc: "2.0",
     id: 0,
@@ -57,6 +65,7 @@ async function route(request) {
   if (typeof request?.method === "string" && request.method.startsWith("debug_")) {
     const block = await freshTraceNode();
     const out = await post(traceNode, request);
+    if (out.error) out.error = JSON.parse(redact(JSON.stringify(out.error)));
     const verdict = out.error ? `error ${JSON.stringify(out.error).slice(0, 200)}` : "ok";
     console.error(
       `${new Date().toISOString()} ${request.method} -> trace node @ fork block ${block}: ${verdict}`,
@@ -75,12 +84,12 @@ createServer(async (req, res) => {
     const body = JSON.parse(Buffer.concat(chunks).toString());
     reply = Array.isArray(body) ? await Promise.all(body.map(route)) : await route(body);
   } catch (e) {
-    reply = { jsonrpc: "2.0", id: null, error: { code: -32603, message: String(e) } };
+    reply = { jsonrpc: "2.0", id: null, error: { code: -32603, message: redact(String(e)) } };
   }
   res.setHeader("content-type", "application/json");
   res.end(JSON.stringify(reply));
 }).listen(port, "127.0.0.1", () => {
   console.error(
-    `trace proxy on 127.0.0.1:${port}: debug_* -> ${traceNode} (re-forked at head when stale), rest -> ${upstream}`,
+    `trace proxy on 127.0.0.1:${port}: debug_* -> ${traceNode} (re-forked at head when stale), rest -> the upstream RPC`,
   );
 });
