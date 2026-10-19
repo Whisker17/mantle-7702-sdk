@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync } from "node:fs";
+import { linkSync, mkdtempSync, symlinkSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SponsorRejectCode } from "@mantle-aa/sdk";
 import { type Address, pad, toHex } from "viem";
@@ -124,6 +124,67 @@ describe("two sponsors on one database", () => {
       error: null,
     });
     expect(a.store.usage(DAY, SENDER).global.business).toEqual({ gas: r.tx.gas, fee: r.tx.maxFee });
+  }, 60_000);
+
+  // Different pathnames for one database file: a symlink to the file, or through a symlinked directory.
+  it.each([
+    [
+      "a symlink to the database file",
+      (path: string) => {
+        const alias = join(dirname(path), "alias.sqlite");
+        symlinkSync(path, alias);
+        return alias;
+      },
+    ],
+    [
+      "a symlinked directory",
+      (path: string) => {
+        const alias = join(mkdtempSync(join(tmpdir(), "sponsor-instances-")), "dir");
+        symlinkSync(dirname(path), alias, "dir");
+        return join(alias, "sponsor.sqlite");
+      },
+    ],
+  ])(
+    "a second sponsor reaching the database through %s cannot start or release the first's reservation",
+    async (_, alias) => {
+      const path = database();
+      const chain = new FakeChain();
+      const held = heldSigner(relayer);
+      const a = open(path, chain, held.signer);
+      await a.ledger.start();
+      const r = request();
+      const relayed = a.ledger.relay(r);
+      await held.signing;
+
+      const b = open(alias(path), chain);
+      await expect(b.ledger.start()).rejects.toThrow(/is in use by another running sponsor/);
+      expect(a.store.entry(r.digest)).toMatchObject({ state: "reserved", error: null });
+      expect(a.store.usage(DAY, SENDER).global.business.fee).toBe(r.tx.maxFee);
+
+      held.release();
+      expect(await relayed).toMatchObject({ status: "pending", batchDigest: r.batchDigest });
+      expect(chain.accepted).toHaveLength(1);
+      expect(a.store.entry(r.digest)).toMatchObject({
+        state: "submitted",
+        reserved: { gas: r.tx.gas, fee: r.tx.maxFee },
+        error: null,
+      });
+    },
+    60_000,
+  );
+
+  it("refuses to submit from a database file with more than one hard link", async () => {
+    const path = database();
+    const chain = new FakeChain();
+    const hard = join(dirname(path), "hard.sqlite");
+    await open(path, chain).close();
+    linkSync(path, hard);
+    // A hard link has no path in common with the database to name a shared lock by.
+    for (const p of [path, hard]) {
+      await expect(open(p, chain).ledger.start()).rejects.toThrow(/has 2 hard links/);
+    }
+    unlinkSync(hard);
+    await open(path, chain).ledger.start();
   }, 60_000);
 
   it("never broadcasts a request whose reservation was released while it was signed", async () => {
