@@ -7,6 +7,7 @@ import {
   getAddress,
   type Hex,
   maxUint256,
+  toHex,
   zeroAddress,
 } from "viem";
 import { generatePrivateKey } from "viem/accounts";
@@ -30,6 +31,7 @@ import {
   RuleKind,
   readProfiles,
   SELECTORS,
+  UndelegationFailedError,
 } from "../../src/index.js";
 import {
   clientFor,
@@ -397,5 +399,63 @@ describe.skipIf(!rpcUrl)("MantleAccount on a Mantle Sepolia fork", () => {
     expect((await agentExec(relayer, ks, me, "b", [await trade("sell", me, unit)])).success).toBe(
       true,
     );
+  }, 180_000);
+
+  it("panic --self-pay --undelegate: a phase 2 whose authorization does not apply fails as such, and a retry finishes it", async () => {
+    // The root signs its undelegation with a stale nonce: the chain skips the authorization and
+    // the transaction still succeeds, leaving the account delegated.
+    class StaleAuthorization extends PrivateKeySigner {
+      stale = false;
+      override signAuthorization(params: Parameters<PrivateKeySigner["signAuthorization"]>[0]) {
+        return super.signAuthorization(
+          this.stale ? { ...params, nonce: (params.nonce ?? 0) + 7 } : params,
+        );
+      }
+    }
+    const root = new StaleAuthorization(generatePrivateKey());
+    const relayer = new TestRelayer(url, book);
+    const account = new MantleAccount({
+      client,
+      root,
+      executor: relayer,
+      addresses: book,
+      keystore: keystore(),
+    });
+    const keyHash = (await account.init({ grant: { policy: acceptancePolicy(), agentName: "a" } }))
+      .session?.keyHash as Hex;
+    await client.request({
+      method: "anvil_setBalance",
+      params: [account.address, toHex(10n ** 18n)],
+    } as never);
+    const sponsored = relayer.requests.length;
+
+    root.stale = true;
+    const failed = await account.panic({ selfPay: true, undelegate: true }).catch((e) => e);
+    expect(failed).toBeInstanceOf(UndelegationFailedError);
+    expect(failed.message).toMatch(
+      /^Revocation \(phase 1\) confirmed in transaction 0x[0-9a-f]{64}; undelegation \(phase 2\) failed: transaction 0x[0-9a-f]{64} left the account delegated/,
+    );
+    expect(failed.revocation).toMatchObject({ status: "confirmed", revokedKeys: [keyHash] });
+    // Phase 1 landed, self-paid: nothing went through the relayer.
+    expect(relayer.requests).toHaveLength(sponsored);
+    const receipt = await client.getTransactionReceipt({ hash: failed.revocation.hash });
+    expect(receipt.from).toBe(account.address.toLowerCase());
+    expect(receipt.to).toBe(account.address.toLowerCase());
+    expect(await account.state()).toBe("INITIALIZED");
+    const [info] = await account.listSessions();
+    expect(info).toMatchObject({ registered: false, summary: { active: false, revoked: true } });
+
+    // The retry has nothing left to revoke and only sends phase 2.
+    root.stale = false;
+    const retried = await account.panic({ selfPay: true, undelegate: true });
+    expect(retried.revocation).toEqual({
+      status: "nothing-to-revoke",
+      hash: null,
+      revokedKeys: [],
+      resetAllowances: [],
+    });
+    expect(retried.undelegation?.status).toBe("confirmed");
+    expect(await account.state()).toBe("UNDELEGATED");
+    expect(relayer.requests).toHaveLength(sponsored);
   }, 180_000);
 });

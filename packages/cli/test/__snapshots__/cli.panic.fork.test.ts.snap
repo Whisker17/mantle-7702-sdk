@@ -1,0 +1,21 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`account panic on a Mantle Sepolia fork > with the sponsor down: --self-pay --undelegate revokes, then undelegates; status shows frozen inventory 1`] = `
+{
+  "recovery": [
+    "The account is undelegated; its keys, nonces and hook storage remain. To use it as a smart account again, run account init: revoked keys stay revoked.",
+    "Revoked keys never come back. Their inventory stays frozen until the root releases it: account exec --release <keyHash,token,amount>.",
+    "Grant new sessions with session grant (always a new key).",
+  ],
+  "revocation": {
+    "hash": "<bytes32>",
+    "resetAllowances": [],
+    "revokedKeys": [],
+    "status": "confirmed",
+  },
+  "undelegation": {
+    "hash": "<bytes32>",
+    "status": "confirmed",
+  },
+}
+`;

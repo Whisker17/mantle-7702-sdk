@@ -128,15 +128,31 @@ exports[`chain commands before any chain access > account init: no RPC URL 1`] =
 }
 `;
 
-exports[`chain commands before any chain access > account panic: not available in this version 1`] = `
+exports[`chain commands before any chain access > account panic: --undelegate needs --self-pay 1`] = `
 {
   "code": 1,
   "json": {
     "command": "account panic",
     "error": {
-      "code": "NOT_AVAILABLE",
-      "message": "account panic is not available in this version",
-      "type": "NotAvailableError",
+      "code": "USAGE",
+      "message": "--undelegate needs --self-pay: the sponsor relays no delegation to the zero address, so the root sends it",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`chain commands before any chain access > account panic: no RPC URL 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "account panic",
+    "error": {
+      "code": "USAGE",
+      "message": "no RPC URL: pass --rpc-url or set MANTLE_AA_RPC_URL",
+      "type": "UsageError",
     },
     "exitCode": 1,
     "ok": false,
