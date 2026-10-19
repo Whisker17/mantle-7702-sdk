@@ -20,9 +20,12 @@ invariant needs an explicit design amendment, not a code comment.
 
 ## Status
 
-The repository holds the toolchain skeleton only (root pnpm workspace, Biome, TypeScript,
-Vitest, CI). The packages, the Foundry project and the deployments land with the 0.1.0
-work. Read the tree, not this paragraph, before assuming a module or command exists.
+Released versions are tagged `vX.Y.Z` (`git tag`). The tree holds the contracts with their
+tests and deployment scripts, the Mantle Sepolia deployment (`deployments/`), the SDK, CLI and
+sponsor packages with both submission paths (relayer and bundler), and the end-to-end suites
+on anvil forks. The Mantle Sepolia acceptance run (`docs/DESIGN.md` §8) lands with 0.1.3.
+Users start at `README.md`; the Sepolia infrastructure is recorded in `docs/infra.md`. Read the
+tree, not this paragraph, before assuming a module or command exists.
 
 ## Build, test, run
 
@@ -33,11 +36,17 @@ pnpm install --frozen-lockfile
 pnpm lint          # biome check .
 pnpm typecheck     # tsc
 pnpm build         # every package that has a build script
-pnpm test          # vitest run
+pnpm test          # vitest run (CI runs e2e/ as a separate job)
 
-# once contracts/foundry.toml exists:
-cd contracts && forge fmt --check && forge build --sizes && forge test -vvv
+cd contracts && forge fmt --check && forge build --sizes \
+  && forge test -vvv --no-match-path 'test/invariant/**'
+# then the invariant suite, once per seed 0x1, 0x2, 0x3:
+FOUNDRY_FUZZ_SEED=0x1 forge test --match-path 'test/invariant/**' -vvv
 ```
+
+The fork suites (`*.fork.test.ts`, `*.fork.t.sol`, `e2e/`) skip without
+`MANTLE_SEPOLIA_RPC_URL`; CI sets it to the public `https://rpc.sepolia.mantle.xyz` and fails
+if a fork suite skips or passes nothing (`e2e/README.md`).
 
 Toolchain: Node 24 (`.nvmrc`), pnpm 11 (`packageManager`), Foundry (stable). Each
 worktree runs its own `pnpm install`; `node_modules/`, `contracts/out/` and
@@ -60,10 +69,13 @@ Mirrors `docs/DESIGN.md` §3:
   policy, reservation ledger, relayer submission, ERC-7677 paymaster signing; also runs
   embedded in the CLI for tests and local demos.
 - **`deployments/`** — committed address books (`mantle-sepolia.json`).
-- **`e2e/`** — end-to-end suites (anvil fork + strict-mode Alto) and the Sepolia
+- **`e2e/`** — end-to-end suites (anvil fork + strict-mode Alto) and, from 0.1.3, the Sepolia
   acceptance script.
 
-Packages are not published; consumers depend on this repository by git or local link.
+Packages are private and not published, and a git dependency does not work (it installs the
+sources without `dist/`). Consume them from a built clone of this repository through pnpm
+`link:` dependencies (`pnpm add link:<clone>/packages/sdk`), linking `viem` from the clone as
+well; a linked SDK reads the address book from the clone's `deployments/`.
 
 ## Chain access and secrets
 
