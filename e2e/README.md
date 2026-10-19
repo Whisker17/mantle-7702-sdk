@@ -2,8 +2,9 @@
 
 End-to-end suites: an anvil fork of Mantle Sepolia (with a strict-mode Alto bundler for the bundler
 path), and the Mantle Sepolia acceptance script (`docs/DESIGN.md` §8, §9; `sepolia.ts` below). Vitest collects every
-`e2e/**/*.test.ts`; like the `*.fork.test.ts` suites they skip without `MANTLE_SEPOLIA_RPC_URL`,
-and CI fails when one of them skips or passes nothing.
+`e2e/**/*.test.ts`; like the `*.fork.test.ts` suites they skip without `MANTLE_SEPOLIA_RPC_URL`
+(except `bundler/trace-proxy.test.ts`, which needs no chain), and CI fails when one of them skips
+or passes nothing.
 
 ## `relayer/` — the relayer path
 
@@ -95,6 +96,10 @@ with `alto/safe-validator.patch`. Alto's whole dependency tree is pinned by
 - `sepolia.sh`, `trace-proxy.mjs`, `land-sepolia.ts`: the same Alto against the real chain, with
   `debug_*` traced on a local anvil fork, and the script that landed the UserOp in
   `docs/infra.md` §10.3.
+- `trace-proxy.test.ts`: with local fixtures for the upstream RPC and the tracing node, JSON-RPC
+  errors naming a credentialed URL reach Alto through `trace-proxy.mjs` with every URL redacted
+  (code and data structure kept, successful results unchanged), checked at the proxy's response and
+  in what the pinned Alto's RPC transport logs.
 
 ## `sepolia.ts` — the acceptance run on Mantle Sepolia
 
