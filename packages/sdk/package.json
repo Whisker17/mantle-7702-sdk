@@ -39,7 +39,7 @@
     "prepack": "pnpm run build"
   },
   "peerDependencies": {
-    "viem": "^2.57.7"
+    "viem": "^2.43.4"
   },
   "devDependencies": {
     "viem": "2.57.7"
