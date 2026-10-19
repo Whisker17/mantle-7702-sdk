@@ -118,7 +118,7 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
   /** The bundle's one UserOperationEvent: sponsored by the deployed paymaster, sent by Alto. */
   const userOpEvent = async (hash: Hex) => {
     const receipt = await stack.client.getTransactionReceipt({ hash });
-    expect(receipt.from.toLowerCase()).toBe(stack.bundler.executor.toLowerCase());
+    expect(stack.bundler.executors).toContain(receipt.from.toLowerCase());
     const events = parseEventLogs({
       abi: entryPoint08Abi,
       eventName: "UserOperationEvent",
@@ -135,6 +135,7 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
 
   it("initialises an undelegated account (root init UserOp with eip7702Auth, first grant) through the bundler", async () => {
     expect(await account.state()).toBe("UNDELEGATED");
+    const sent = Date.now();
     const result = await account.init({ grant: { policy, agentName: "agent" } });
 
     expect(result.state).toBe("INITIALIZED");
@@ -146,7 +147,7 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
     expect(event).toMatchObject({ sender: root.address, paymaster: PM, success: true, nonce: 0n });
     initCost = event.actualGasCost;
     // Accepted through safe-mode validation: Alto traced it with its ERC-7562 collector.
-    expect(stack.bundler.logs()).toContain("tracerResult");
+    await stack.bundler.traced(root.address, sent);
     expect((await stack.client.getCode({ address: root.address }))?.toLowerCase()).toBe(
       delegationDesignator(book.caliburEntry),
     );
@@ -184,9 +185,12 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
     });
     const lane = BigInt(keyHash) >> 64n;
 
+    const sent = Date.now();
     const result = await agent.exec([approve(123n)], { via: "bundler" });
 
     expect(result.success).toBe(true);
+    // Accepted through safe-mode validation, as the init.
+    await stack.bundler.traced(root.address, sent);
     const tx = await stack.client.getTransaction({ hash: result.hash });
     expect(tx.type).not.toBe("eip7702");
     expect(await userOpEvent(result.hash)).toMatchObject({

@@ -86,7 +86,7 @@ describe.skipIf(!rpcUrl)(
     async function bundle(r: CliResult, type?: "eip7702") {
       const hash = r.stdout.match(/"hash":"(0x[0-9a-f]{64})"/)?.[1] as Hex;
       const tx = await stack.client.getTransaction({ hash });
-      expect(tx.from.toLowerCase()).toBe(stack.bundler.executor.toLowerCase());
+      expect(stack.bundler.executors).toContain(tx.from.toLowerCase());
       expect(tx.to?.toLowerCase()).toBe(book.entryPoint.toLowerCase());
       if (type) expect(tx.type).toBe(type);
       else expect(tx.type).not.toBe("eip7702");
