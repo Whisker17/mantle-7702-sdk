@@ -38,28 +38,32 @@ with `alto/safe-validator.patch`. Alto's whole dependency tree is pinned by
 `alto/package-lock.json` and installed with `npm ci` outside the pnpm workspace.
 
 - `harness.ts`: what a fork suite starts and stops itself. `startBundlerStack(upstreamRpcUrl)`
-  starts an anvil fork and Alto on it, with a random executor key funded on the fork. It returns
-  `{ rpcUrl, client, bundler: { url, entryPoint, executor, logs }, stop }`. `startFork` and
-  `startAlto({ rpcUrl, executorKey })` are its two halves. `setPaymasterSigner` swaps the deployed
-  VerifyingPaymaster's signer on a fork for a key the test holds. Ports are random, every wait is
-  bounded, and `stop()` kills every process.
+  starts an anvil fork and Alto on it, with three random executor keys funded on the fork. It
+  returns `{ rpcUrl, client, bundler: { url, entryPoint, executors, timeline, traced }, stop }`.
+  `timeline(since)` is Alto's log since a time, for failure messages; `traced(sender, since)`
+  waits until Alto has logged the ERC-7562 trace of a UserOp of `sender` validated since then, the
+  per-op proof that safe-mode validation ran. `startFork` and `startAlto({ rpcUrl, executorKeys })`
+  are its two halves. `setPaymasterSigner` swaps the deployed VerifyingPaymaster's signer on a fork
+  for a key the test holds. Ports are random, every wait is bounded, and `stop()` kills every
+  process. What the harness does against Alto's stalls and the fork's per-block upstream reads,
+  measured: `docs/infra.md` §10.6. In short: the fork mines a block per transaction and one every
+  second besides, because Alto (and viem's receipt waits) notice an inclusion only on a later
+  block; Alto gets several executors, because every validation needs a free one and a bundle
+  holds its own until then; and the Prague system contracts' ring buffers are zeroed on the fork,
+  because otherwise anvil reads three storage slots from the upstream RPC for every block.
 - `userop.ts`: `sendSponsoredUserOp` builds, sizes, sponsors (paymaster data signed directly with
   the signer key), signs, sends and awaits one UserOp for a Calibur account.
 - `bundler.test.ts`: the smoke suite. A fresh EOA's root init UserOp with `eip7702Auth`,
-  sponsored by the deployed paymaster, lands as a type-4 bundle.
+  sponsored by the deployed paymaster, lands as a type-4 bundle. With mining stopped, a second
+  op is validated and bundled while the first op's bundle is still unmined.
 - `path.test.ts`: §8 steps 1–6 through the bundler path (`--via bundler`), twice like the relayer
   suite: (a) against `mantle-aa sponsor serve` with a paymaster signer key, (b) in embedded mode
   (`MANTLE_AA_EMBEDDED_RELAYER=1` + `MANTLE_AA_PAYMASTER_SIGNER_KEY`). Each run starts its own fork
   and Alto and swaps the deployed VerifyingPaymaster's signer for the sponsor's key, so the root's
   init UserOp (2-byte `0x7702` initCode) and every session UserOp land through the deployed
   paymaster code. Same fixture, policy and 0-MNT assertions as the relayer suite; the account's
-  EntryPoint deposit also stays 0. The fork mines a block every second (interval mining), as a live
-  chain does: on an automining fork Alto stalls. It releases its executor wallet only on a new block
-  that shows its bundle included, so on a quiet chain an `eth_sendUserOperation` can wait for that
-  wallet without bound (measured: 30 s while a bundle sat unmined, answered within 1 s of the next
-  block); and on a slow runner its bundle transaction, mined inside `eth_sendRawTransaction`,
-  outlasted its 10 s RPC bound three times, after which it re-validated the op endlessly without
-  dropping it (Alto 0.0.21) and the failures throttled the paymaster's reputation.
+  EntryPoint deposit also stays 0. Every bundled op must also show that Alto traced its validation
+  in safe mode.
   - Every overreach is refused three times: by `agent exec` (nothing reaches the bundler), by the
     sponsor's paymaster service for a request built without the pre-check, and on chain: the test
     signs the session UserOp with the session key, signs its paymaster data itself with the swapped

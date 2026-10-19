@@ -33,7 +33,6 @@ import {
   type BundlerStack,
   setPaymasterSigner,
   startBundlerStack,
-  upstreamSummary,
 } from "../../../e2e/bundler/harness.js";
 import type { SponsorConfig } from "../src/config.js";
 import { startSponsor } from "../src/main.js";
@@ -138,7 +137,6 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
     expect(await account.state()).toBe("UNDELEGATED");
     const sent = Date.now();
     const result = await account.init({ grant: { policy, agentName: "agent" } });
-    console.log(`[diag-step] init ${Date.now() - sent}ms ${upstreamSummary(stack.upstream, sent)}`);
 
     expect(result.state).toBe("INITIALIZED");
     const hash = result.hash as Hex;
@@ -149,9 +147,7 @@ describe.skipIf(!rpcUrl)("BundlerExecutor through strict Alto on a Mantle Sepoli
     expect(event).toMatchObject({ sender: root.address, paymaster: PM, success: true, nonce: 0n });
     initCost = event.actualGasCost;
     // Accepted through safe-mode validation: Alto traced it with its ERC-7562 collector.
-    const waited = Date.now();
     await stack.bundler.traced(root.address, sent);
-    console.log(`[diag-trace] init trace found after ${Date.now() - waited}ms`);
     expect((await stack.client.getCode({ address: root.address }))?.toLowerCase()).toBe(
       delegationDesignator(book.caliburEntry),
     );

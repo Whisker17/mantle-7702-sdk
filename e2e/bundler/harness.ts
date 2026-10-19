@@ -188,68 +188,22 @@ function own(
 export interface Fork extends Owned {
   /** JSON-RPC URL of the fork (chain id 5003). */
   url: string;
-  /** DIAGNOSTIC: every request anvil sent upstream. */
-  upstream: UpstreamCall[];
-}
-
-/** DIAGNOSTIC: one request anvil sent to the upstream RPC. */
-export interface UpstreamCall {
-  t: number;
-  ms: number;
-  status: number;
-  methods: string;
-  key: string;
-  code?: number;
-}
-
-/** DIAGNOSTIC: upstream requests started in [since, until]: count, latency sum/max, statuses. */
-export function upstreamSummary(calls: UpstreamCall[], since: number, until = Date.now()) {
-  const window = calls.filter((c) => c.t >= since && c.t <= until);
-  const sum = window.reduce((a, c) => a + c.ms, 0);
-  const max = window.reduce((a, c) => Math.max(a, c.ms), 0);
-  const statuses: Record<string, number> = {};
-  const methods: Record<string, number> = {};
-  for (const c of window) {
-    const k = `${c.status}${c.code === undefined ? "" : `/${c.code}`}`;
-    statuses[k] = (statuses[k] ?? 0) + 1;
-    methods[c.methods] = (methods[c.methods] ?? 0) + 1;
-  }
-  const seen = new Set(calls.filter((c) => c.t < since).map((c) => c.key));
-  let repeats = 0;
-  for (const c of window) {
-    if (seen.has(c.key)) repeats++;
-    seen.add(c.key);
-  }
-  return `upstream n=${window.length} repeats=${repeats} sum=${sum}ms max=${max}ms avg=${window.length ? Math.round(sum / window.length) : 0}ms statuses=${JSON.stringify(statuses)} methods=${JSON.stringify(methods)}`;
 }
 
 /**
  * Starts anvil forking `upstreamRpcUrl` at its head (Prague rules, so EIP-7702 applies). It mines a
  * block for every transaction and, like a live chain, one every second besides (mixed mining):
  * Alto, and viem's receipt waits, notice an inclusion only on a later block, which a purely
- * automining fork never mines once the suite stops sending (docs/infra.md §10.6).
+ * automining fork never mines once the suite stops sending (docs/infra.md §10.6). anvil exits when
+ * the upstream RPC fails while it builds the fork (HTTP 429 under parallel suites), so an exited
+ * start is retried, as `packages/sdk/test/account/fork.ts` does.
  */
 export async function startFork(upstreamRpcUrl: string, timeoutMs = 60_000): Promise<Fork> {
-  const upstream: UpstreamCall[] = [];
-  let listening: (port: number) => void = () => undefined;
-  const proxyPort = new Promise<number>((resolve) => {
-    listening = resolve;
-  });
-  const proxy = own(
-    process.execPath,
-    [fileURLToPath(new URL("./diag-upstream.mjs", import.meta.url))],
-    { UPSTREAM_RPC_URL: upstreamRpcUrl },
-    (line) => {
-      if (line.startsWith("listening ")) listening(Number(line.slice(10)));
-      else if (line.startsWith("{")) upstream.push(JSON.parse(line));
-    },
-  );
-  const via = `http://127.0.0.1:${await Promise.race([proxyPort, sleep(10_000, 0)])}`;
   for (let attempt = 1; ; attempt++) {
     const port = await freePort();
     const anvil = own("anvil", [
       "--fork-url",
-      via,
+      upstreamRpcUrl,
       "--port",
       String(port),
       "--hardfork",
@@ -262,23 +216,16 @@ export async function startFork(upstreamRpcUrl: string, timeoutMs = 60_000): Pro
     const url = `http://127.0.0.1:${port}`;
     try {
       await waitForRpc(url, anvil.child, timeoutMs, "anvil");
-      const stop = async () => {
-        await anvil.stop();
-        await proxy.stop();
-      };
-      return { url, upstream, stop };
+      return { url, stop: anvil.stop };
     } catch (e) {
       await anvil.stop();
-      const message = `${(e as Error).message}: ${anvil
+      const output = anvil
         .output()
         .replace(/\w+:\/\/[^\s)]+/g, "<url>")
-        .slice(-1_000)}`;
-      // anvil exits when the upstream RPC fails while it builds the fork (HTTP 429 under parallel
-      // suites, measured), so an exited start is retried, as packages/sdk/test/account/fork.ts does.
-      if (attempt === FORK_ATTEMPTS || !message.startsWith("anvil exited")) {
-        await proxy.stop();
-        throw new Error(`${message} (${attempt} attempts)`);
-      }
+        .slice(-1_000);
+      const message = `${(e as Error).message}: ${output} (${attempt} attempts)`;
+      if (attempt === FORK_ATTEMPTS || !message.startsWith("anvil exited"))
+        throw new Error(message);
       await sleep(1_000 * attempt);
     }
   }
@@ -351,9 +298,14 @@ function altoEntry(line: string): AltoEntry | undefined {
     return undefined;
   }
   if (msg.startsWith("tracerResult: ")) {
-    const trace = JSON.parse(msg.slice("tracerResult: ".length)) as {
+    let trace: {
       callsFromEntryPoint?: { topLevelMethodSig?: string; topLevelTargetAddress?: string }[];
-    };
+    } = {};
+    try {
+      trace = JSON.parse(msg.slice("tracerResult: ".length));
+    } catch {
+      // an unparsable trace names no sender
+    }
     const traced = (trace.callsFromEntryPoint ?? [])
       .filter((c) => c.topLevelMethodSig === VALIDATE_USER_OP)
       .map((c) => String(c.topLevelTargetAddress).toLowerCase());
@@ -468,8 +420,6 @@ export const forkClient = (url: string): ForkClient =>
 export interface BundlerStack extends Owned {
   /** The anvil fork's JSON-RPC URL. */
   rpcUrl: string;
-  /** DIAGNOSTIC: every request anvil sent upstream. */
-  upstream: UpstreamCall[];
   bundler: Bundler;
   client: ForkClient;
 }
@@ -537,7 +487,6 @@ export async function startBundlerStack(upstreamRpcUrl: string): Promise<Bundler
     const bundler = await startAlto({ rpcUrl: fork.url, executorKeys });
     return {
       rpcUrl: fork.url,
-      upstream: fork.upstream,
       bundler,
       client,
       stop: async () => {
