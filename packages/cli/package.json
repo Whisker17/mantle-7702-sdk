@@ -44,6 +44,6 @@
   "dependencies": {
     "@0xwh1sker/mantle-aa-sdk": "workspace:*",
     "@0xwh1sker/mantle-aa-sponsor": "workspace:*",
-    "viem": "^2.57.7"
+    "viem": "^2.43.4"
   }
 }

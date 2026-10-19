@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The last gate before `pnpm -r publish`: packs the three packages exactly as a publish would,
 # checks every tarball (file allowlist, licence, manifest), installs them with npm in a scratch
-# project outside the repository and uses them as a consumer would. Ends with
+# project outside the repository and uses them as a consumer would, then installs and type-checks
+# the same consumer on the oldest supported and the newest viem 2.x. Ends with
 # `pnpm -r publish --dry-run --no-git-checks`, whose file lists must equal the tarballs'.
 #
 # Usage: scripts/pack-check.sh
@@ -38,7 +39,17 @@ VERSION=$(version_of "$ROOT/packages/sdk")
 VIEM=$(version_of "$ROOT/node_modules/viem")
 TYPESCRIPT=$(version_of "$ROOT/node_modules/typescript")
 TYPES_NODE=$(version_of "$ROOT/node_modules/@types/node")
-echo "version $VERSION; viem $VIEM; node $(node --version); scratch $WORK"
+# The oldest viem the SDK's typecheck and tests pass with: 2.43.4 fixed the EIP-7702 UserOperation
+# hash and initCode (`0x7702`) that the bundler path and the paymaster digest depend on; 2.43.3 and
+# older fail them. The peer range must admit it, and a consumer on it must get one viem copy.
+VIEM_MIN=2.43.4
+VIEM_NEWEST=$(npm view 'viem@>=2 <3' version --json | node -e '
+const v = [].concat(JSON.parse(require("fs").readFileSync(0, "utf8"))).filter((x) => /^2\.\d+\.\d+$/.test(x));
+const n = (x) => x.split(".").map(Number);
+v.sort((a, b) => n(a)[1] - n(b)[1] || n(a)[2] - n(b)[2]);
+console.log(v.at(-1));
+') || fail "npm view viem versions"
+echo "version $VERSION; viem $VIEM (oldest supported $VIEM_MIN, newest 2.x $VIEM_NEWEST); node $(node --version); scratch $WORK"
 
 step "pack (prepack runs a clean build)"
 # A stale file in dist/ would be packed by `files: ["dist"]`: the clean build must remove it.
@@ -114,6 +125,9 @@ for (const [p, j] of Object.entries(m)) {
 }
 expect(same(m.sdk.dependencies ?? {}, {}), `sdk: dependencies ${JSON.stringify(m.sdk.dependencies)}`);
 expect(caretAdmits(m.sdk.peerDependencies?.viem, viem), `sdk: peer viem ${m.sdk.peerDependencies?.viem} does not admit ${viem}`);
+// One range for all three: a narrower sponsor/CLI range would nest a second viem for a consumer
+// whose viem the SDK's peer range admits.
+for (const p of ["sponsor", "cli"]) expect(m[p].dependencies?.viem === m.sdk.peerDependencies?.viem, `${p}: viem ${m[p].dependencies?.viem}, not the SDK's peer range ${m.sdk.peerDependencies?.viem}`);
 expect(same(Object.keys(m.sdk.peerDependencies ?? {}), ["viem"]), "sdk: peer dependencies other than viem");
 for (const p of ["sponsor", "cli"]) {
   expect(m[p].dependencies?.["@0xwh1sker/mantle-aa-sdk"] === version, `${p}: depends on sdk ${m[p].dependencies?.["@0xwh1sker/mantle-aa-sdk"]}`);
@@ -282,6 +296,28 @@ cat >tsconfig.json <<'EOF'
 EOF
 npx --no-install tsc -p tsconfig.json || fail "the consumer does not type-check"
 echo "tsc -p tsconfig.json (skipLibCheck false): exit 0"
+
+# A consumer already on another viem 2.x: npm must accept it for the SDK's peer and the sponsor's and
+# the CLI's dependency (no ERESOLVE, no nested copy), and the same consumer must type-check.
+for v in "$VIEM_MIN" "$VIEM_NEWEST"; do
+  step "consumer on viem $v: install, one viem copy, type-check"
+  ALT="$WORK/app-viem-$v"
+  mkdir -p "$ALT" && cd "$ALT"
+  npm init -y >/dev/null && npm pkg set type=module private=true >/dev/null
+  npm install --no-audit --no-fund --loglevel=error \
+    "$WORK/tgz/0xwh1sker-mantle-aa-sdk-$VERSION.tgz" \
+    "$WORK/tgz/0xwh1sker-mantle-aa-sponsor-$VERSION.tgz" \
+    "$WORK/tgz/0xwh1sker-mantle-aa-cli-$VERSION.tgz" \
+    "viem@$v" "typescript@$TYPESCRIPT" "@types/node@$TYPES_NODE" || fail "npm install with viem@$v"
+  npm ls --all >/dev/null || fail "viem@$v: npm ls reports a missing or invalid dependency"
+  viems=$(npm ls viem --all --parseable | sort -u)
+  [[ $viems == "$ALT/node_modules/viem" ]] || fail "viem@$v: expected one viem copy at node_modules/viem, found: $viems"
+  [[ $(version_of "$ALT/node_modules/viem") == "$v" ]] || fail "viem@$v: installed $(version_of "$ALT/node_modules/viem")"
+  echo "one viem copy: node_modules/viem ($v)"
+  cp "$APP/consumer.ts" "$APP/tsconfig.json" .
+  npx --no-install tsc -p tsconfig.json || fail "viem@$v: the consumer does not type-check"
+  echo "viem@$v: tsc -p tsconfig.json (skipLibCheck false): exit 0"
+done
 
 step "pnpm -r publish --dry-run --no-git-checks"
 cd "$ROOT"
