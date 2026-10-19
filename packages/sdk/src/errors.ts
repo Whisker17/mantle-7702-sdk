@@ -113,3 +113,7 @@ export class ExecutionRevertedError extends Error {
     this.reason = params.reason;
   }
 }
+
+/** Every URL becomes `<redacted-url>`: an RPC URL may carry an API key in its path or query. */
+export const redactUrls = (text: string): string =>
+  text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi, "<redacted-url>");

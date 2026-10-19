@@ -5,6 +5,7 @@ import {
   KeyExpiredError,
   LimitExceededError,
   PolicyViolationError,
+  redactUrls,
   SponsorBusyError,
   SponsorRejectedError,
 } from "@mantle-aa/sdk";
@@ -74,9 +75,8 @@ const TABLE: [(e: Error) => boolean, ErrorCode][] = [
 const exitCodeOf = (code: ErrorCode): number =>
   code === "USAGE" || code === "NOT_AVAILABLE" ? EXIT_CODES.ERROR : EXIT_CODES[code];
 
-/** Every URL becomes `<redacted-url>`: an RPC URL may carry an API key in its path or query. */
-export const redact = (text: string): string =>
-  text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi, "<redacted-url>");
+/** Every URL becomes `<redacted-url>` (shared with the sponsor, hence kept in the SDK). */
+export const redact = redactUrls;
 
 export interface ErrorOutput {
   exitCode: number;

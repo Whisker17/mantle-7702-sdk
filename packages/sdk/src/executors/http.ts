@@ -27,7 +27,10 @@ export async function fetchJson(
     if ((error as Error)?.name === "TimeoutError") {
       throw new Error(`${e.label} did not answer within ${e.timeoutMs} ms`);
     }
-    throw new Error(`${e.label} unreachable: ${(error as Error)?.message}`, { cause: error });
+    // Neither the native message nor the cause: either may hold the URL, and with it a credential.
+    const code = (error as { cause?: { code?: unknown } })?.cause?.code;
+    const reason = typeof code === "string" && /^[A-Z_]+$/.test(code) ? code : "request failed";
+    throw new Error(`${e.label} unreachable: ${reason}`);
   }
   if (!res.ok) throw new Error(`${e.label} answered HTTP ${res.status}`);
   try {
