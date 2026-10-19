@@ -82,7 +82,8 @@ worst-case fee before it submits, and settles at the fee the receipt shows, reve
 included.
 
 One sponsor submits from a database at a time: a second `sponsor serve` on the same `database`
-refuses to start. `sponsor relayer status|bump|cancel` still work beside the running sponsor.
+refuses to start, also through a symlink, and a database file with several hard links is refused.
+`sponsor relayer status|bump|cancel` still work beside the running sponsor.
 
 ### Embedded mode
 
