@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { type DeploymentRecord, loadDeployments } from "../src/index.js";
+import { MANTLE_SEPOLIA } from "../src/mantle-sepolia.js";
 
 const file = new URL("../../../deployments/mantle-sepolia.json", import.meta.url);
 const record: DeploymentRecord = JSON.parse(readFileSync(file, "utf8"));
 
 describe("deployments", () => {
-  it("loads the committed Mantle Sepolia address book by default", () => {
+  it("loads the shipped Mantle Sepolia address book by default", () => {
     expect(loadDeployments()).toEqual({
       chainId: 5003,
       caliburEntry: "0x000000005c84F8Fd50b21CAC312528A64437030e",
@@ -17,6 +18,25 @@ describe("deployments", () => {
       mockLaunchpad: "0x63614eAb4365EcA8c674D649fF2d3beb1a1cC7E9",
       memeToken: "0xAb2D3B4cD4770e2669fe2BA781D449A214EF958f",
     });
+  });
+
+  it("ships a copy that matches the committed address book", () => {
+    // The committed record, cut down to the fields the shipped copy carries.
+    const { chainId, VerifyingPaymaster } = record;
+    const address = (contract: { address: string }) => ({ address: contract.address });
+    expect(MANTLE_SEPOLIA).toEqual({
+      chainId,
+      CaliburEntry: address(record.CaliburEntry),
+      VerifyingPaymaster: {
+        address: VerifyingPaymaster.address,
+        entryPoint: VerifyingPaymaster.entryPoint,
+      },
+      AgentPolicyHook: address(record.AgentPolicyHook),
+      MockUSD: address(record.MockUSD),
+      MockLaunchpad: address(record.MockLaunchpad),
+      MemeToken: address(record.MemeToken),
+    });
+    expect(loadDeployments()).toEqual(loadDeployments(file));
   });
 
   it("accepts a custom record and checksums its addresses", () => {
