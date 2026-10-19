@@ -4,7 +4,7 @@ import {
   ERC20ETH,
   erc20Abi,
   SponsorRejectCode,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import { type Address, encodeFunctionData, type Hex, parseEther, zeroHash } from "viem";
 import { describe, expect, it } from "vitest";
 import type { SignedBatchedCall } from "../src/auth.js";

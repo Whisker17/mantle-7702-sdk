@@ -8,7 +8,7 @@ import {
   relayRequestDigest,
   SPONSOR_REJECTED_RPC_CODE,
   SponsorRejectCode,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import type { Address, Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

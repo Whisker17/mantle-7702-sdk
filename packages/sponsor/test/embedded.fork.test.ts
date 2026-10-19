@@ -14,7 +14,7 @@ import {
   RelayerExecutor,
   RuleKind,
   SELECTORS,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import { encodeFunctionData, toHex, zeroAddress } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

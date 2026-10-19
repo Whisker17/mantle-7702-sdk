@@ -1,6 +1,6 @@
 import { realpathSync, statSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import type { PaymasterDataResult, RelayResult, SponsorRejectCode } from "@mantle-aa/sdk";
+import type { PaymasterDataResult, RelayResult, SponsorRejectCode } from "@0xwh1sker/mantle-aa-sdk";
 import type { Address, Hex } from "viem";
 
 /** Management requests (init / grant / revoke / panic) draw on a reserve business requests cannot. */

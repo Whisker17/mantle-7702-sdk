@@ -1,4 +1,4 @@
-import { mantleSepolia } from "@mantle-aa/sdk";
+import { mantleSepolia } from "@0xwh1sker/mantle-aa-sdk";
 import {
   type Address,
   createClient,

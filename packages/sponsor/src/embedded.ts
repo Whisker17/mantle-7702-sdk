@@ -1,4 +1,4 @@
-import { type AddressBook, loadDeployments } from "@mantle-aa/sdk";
+import { type AddressBook, loadDeployments } from "@0xwh1sker/mantle-aa-sdk";
 import { type Address, getAddress, parseEther } from "viem";
 import type { SponsorConfig, SponsorPolicy } from "./config.js";
 import { startSponsor } from "./main.js";

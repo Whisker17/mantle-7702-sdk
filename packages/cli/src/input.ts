@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import type { Call, Policy, QuoteLimit, ReleaseTuple } from "@mantle-aa/sdk";
-import { RuleKind } from "@mantle-aa/sdk";
+import type { Call, Policy, QuoteLimit, ReleaseTuple } from "@0xwh1sker/mantle-aa-sdk";
+import { RuleKind } from "@0xwh1sker/mantle-aa-sdk";
 import { type Address, getAddress, type Hex, isAddress, isHex, toFunctionSelector } from "viem";
 import { UsageError } from "./errors.js";
 

@@ -1,4 +1,4 @@
-export const PACKAGE_NAME = "@mantle-aa/sdk";
+export const PACKAGE_NAME = "@0xwh1sker/mantle-aa-sdk";
 
 export * from "./account/index.js";
 export * from "./chains.js";

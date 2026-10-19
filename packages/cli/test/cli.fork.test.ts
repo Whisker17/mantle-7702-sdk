@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { type Call, launchpadAbi, loadDeployments, readProfiles } from "@mantle-aa/sdk";
+import { type Call, launchpadAbi, loadDeployments, readProfiles } from "@0xwh1sker/mantle-aa-sdk";
 import { type Address, encodeFunctionData, erc20Abi, type Hex, toHex } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

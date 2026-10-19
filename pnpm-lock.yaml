@@ -26,10 +26,10 @@ importers:
 
   packages/cli:
     dependencies:
-      '@mantle-aa/sdk':
+      '@0xwh1sker/mantle-aa-sdk':
         specifier: workspace:*
         version: link:../sdk
-      '@mantle-aa/sponsor':
+      '@0xwh1sker/mantle-aa-sponsor':
         specifier: workspace:*
         version: link:../sponsor
       viem:
@@ -44,7 +44,7 @@ importers:
 
   packages/sponsor:
     dependencies:
-      '@mantle-aa/sdk':
+      '@0xwh1sker/mantle-aa-sdk':
         specifier: workspace:*
         version: link:../sdk
       viem:

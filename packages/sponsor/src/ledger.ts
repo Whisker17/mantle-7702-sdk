@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { type RelayResult, SponsorRejectCode } from "@mantle-aa/sdk";
+import { type RelayResult, SponsorRejectCode } from "@0xwh1sker/mantle-aa-sdk";
 import { type Address, BaseError, type Client, type Hex, parseTransaction } from "viem";
 import type { LocalAccount } from "viem/accounts";
 import { estimateFeesPerGas } from "viem/actions";

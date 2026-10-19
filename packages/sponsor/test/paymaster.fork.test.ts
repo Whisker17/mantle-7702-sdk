@@ -25,7 +25,7 @@ import {
   SELECTORS,
   type Signer,
   signPaymasterRequest,
-} from "@mantle-aa/sdk";
+} from "@0xwh1sker/mantle-aa-sdk";
 import {
   type Address,
   encodeAbiParameters,

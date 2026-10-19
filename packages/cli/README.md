@@ -1,4 +1,4 @@
-# @mantle-aa/cli
+# @0xwh1sker/mantle-aa-cli
 
 The `mantle-aa` command (docs/DESIGN.md §6). Build with `pnpm build`; run `node packages/cli/dist/bin.js`
 (the package's `bin` is `mantle-aa`). `mantle-aa --help` lists the commands.
@@ -112,5 +112,5 @@ SIGTERM. The shapes are pinned by the snapshots in `test/__snapshots__/`.
 
 No output contains a private key or the password, and URLs in error messages are redacted.
 
-In tests, call `run(argv, { env, stdout, stderr, stdin, signal })` from `@mantle-aa/cli` (its exit
-code is the resolved value) or spawn the built binary.
+In tests, call `run(argv, { env, stdout, stderr, stdin, signal })` from `@0xwh1sker/mantle-aa-cli`
+(its exit code is the resolved value) or spawn the built binary.
