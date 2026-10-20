@@ -19,6 +19,7 @@ clone, `pnpm build` and run `node packages/cli/dist/bin.js`. `mantle-aa --help` 
 | ERC-4337 bundler (`--via bundler`) | `--bundler-url` | `MANTLE_AA_BUNDLER_URL` |
 | Embedded sponsor's paymaster signer (`--via bundler`) | | `MANTLE_AA_PAYMASTER_SIGNER_KEY` |
 | Keystore password | interactive prompt | `MANTLE_AA_KEYSTORE_PASSWORD` |
+| Password of an exported home (`session export`) | interactive prompt | `MANTLE_AA_EXPORT_PASSWORD` |
 | Key and profile directory | | `MANTLE_AA_HOME` (default `~/.mantle-aa`) |
 
 A sponsor is reached only by commands that submit. With the embedded sponsor each such command
@@ -77,6 +78,28 @@ relayer and 1.62 M self-paid. The Mantle Sepolia block gas limit is 60 M
 - Every grant (`account init --grant`, `session grant`) creates a new session key and a new
   version of the agent's profile: `<agent>` names the new key and the key it named before stays
   reachable as `<agent>.v1`, `<agent>.v2`, ….
+- `session export --agent <name> --out <dir>` writes an **agent-only home** for the agent's
+  process: `<dir>/keys/<name>.json`, the session key re-encrypted under the export password, and
+  `<dir>/profiles.json` with only the agent profile `<name>`. No root key, no root profile, and the
+  root's password does not open it. The export password must differ from the keystore password.
+  It refuses an `--out` that holds a root profile or any key no agent profile there names, a
+  profile that is not an agent's (exit 1), and a key that is revoked or expired on chain (exit
+  13, a read-only check). Exporting again into the same home replaces that one profile and key.
+
+Hand-off: the root exports, then runs the agent with only that home and that password; nothing
+of the root's reaches the agent's process.
+
+```sh
+# The root, in its own home:
+MANTLE_AA_EXPORT_PASSWORD=… mantle-aa session export --agent trader --out /srv/agent/.mantle-aa
+# The agent's process:
+MANTLE_AA_HOME=/srv/agent/.mantle-aa MANTLE_AA_KEYSTORE_PASSWORD=<export password> \
+  mantle-aa agent exec --agent trader --calls '[…]'
+```
+
+In an exported home `agent simulate` and `agent exec` work as in the root's; every `account` and
+`session` command fails with a usage error (exit 1): there is no root profile. To grant, update or
+revoke, the root works in its own home; after a new grant it exports again.
 
 A policy file is the `setPolicy` struct as JSON, amounts as decimal strings; `maxValuePerCall` and
 `mntLimit` default to zero, a `selector` may be a function signature and a `ruleKind` a name:

@@ -516,6 +516,54 @@ exports[`keys > new: refuses an existing profile name 1`] = `
 }
 `;
 
+exports[`session export before any chain access > refuses an --out that holds a root profile or a key of no agent profile 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "session export",
+    "error": {
+      "code": "USAGE",
+      "message": "<home>/agent-home holds a root profile or a key of no agent profile; export into an agent-only home",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`session export before any chain access > refuses an export password equal to the keystore password, or none without a terminal 1`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "session export",
+    "error": {
+      "code": "USAGE",
+      "message": "the export password must differ from the keystore password",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
+exports[`session export before any chain access > refuses an export password equal to the keystore password, or none without a terminal 2`] = `
+{
+  "code": 1,
+  "json": {
+    "command": "session export",
+    "error": {
+      "code": "USAGE",
+      "message": "no export password: set MANTLE_AA_EXPORT_PASSWORD or run in a terminal",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+    "ok": false,
+  },
+}
+`;
+
 exports[`sponsor > relayer bump: --config is required 1`] = `
 {
   "code": 1,

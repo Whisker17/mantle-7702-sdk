@@ -571,6 +571,8 @@ local relayer key; tests and local demos only.
   interactively or injected through `MANTLE_AA_KEYSTORE_PASSWORD`.
 - Profiles: `~/.mantle-aa/profiles.json` maps `name → {account, keyHash, keyfile, role}`;
   every grant creates a new key and a new profile version.
+- `session export` writes an agent-only home: one session key, re-encrypted under its own
+  password (`MANTLE_AA_EXPORT_PASSWORD`), and its agent profile, with no root key or root profile.
 
 ## 6. CLI
 
@@ -584,6 +586,7 @@ mantle-aa session grant    --agent <name> --policy <policy.json>
 mantle-aa session update   --agent <name> --policy <policy.json>
 mantle-aa session revoke   --agent <name>
 mantle-aa session list
+mantle-aa session export   --agent <name> --out <dir>
 mantle-aa agent simulate   --agent <name> --calls <json>
 mantle-aa agent exec       --agent <name> --calls <json> [--via relayer|bundler]
 mantle-aa sponsor serve    --config <sponsor.yaml>

@@ -30,7 +30,8 @@ export interface CliResult {
 export async function cli(
   args: string[],
   env: NodeJS.ProcessEnv,
-  options: { stdin?: string; signal?: AbortSignal; json?: boolean } = {},
+  /** `defaultScrypt`: keystores this run writes pay geth's cost, as outside the tests. */
+  options: { stdin?: string; signal?: AbortSignal; json?: boolean; defaultScrypt?: boolean } = {},
 ): Promise<CliResult> {
   let stdout = "";
   let stderr = "";
@@ -43,7 +44,7 @@ export async function cli(
       stderr += t;
     },
     stdin: Readable.from([options.stdin ?? ""]),
-    scrypt: SCRYPT,
+    ...(!options.defaultScrypt && { scrypt: SCRYPT }),
     ...(options.signal && { signal: options.signal }),
   });
   const line = stdout.trim().split("\n")[0];
