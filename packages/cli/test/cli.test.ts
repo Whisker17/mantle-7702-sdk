@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readProfiles, saveProfile } from "@0xwh1sker/mantle-aa-sdk";
 import { privateKeyToAddress } from "viem/accounts";
@@ -185,6 +185,52 @@ describe("chain commands before any chain access", () => {
     expect(await snap(["account", "init", "--via", "bundler"])).toEqual(
       await snap(["account", "init"]),
     );
+  });
+});
+
+describe("session export before any chain access", () => {
+  const EXPORT_PASSWORD = "cli-test-export-password";
+  let out: string;
+  beforeEach(async () => {
+    await snap(["keys", "new", "--name", "root"]);
+    const options = { home: env.MANTLE_AA_HOME as string };
+    saveProfile(
+      "bot",
+      {
+        account: readProfiles(options).root?.account as `0x${string}`,
+        keyHash: `0x${"22".repeat(32)}`,
+        keyfile: "bot-1.json",
+        role: "agent",
+      },
+      options,
+    );
+    out = join(home, "agent-home");
+  });
+  const exportTo = (
+    dir: string,
+    e: NodeJS.ProcessEnv = { ...env, MANTLE_AA_EXPORT_PASSWORD: EXPORT_PASSWORD },
+  ) =>
+    cli(["session", "export", "--agent", "bot", "--out", dir], e).then((r) => {
+      expect(r.stdout + r.stderr).not.toContain(EXPORT_PASSWORD);
+      return { code: r.code, json: normalize(r.json, home) };
+    });
+
+  it("refuses an --out that holds a root profile or a key of no agent profile", async () => {
+    mkdirSync(join(out, "keys"), { recursive: true });
+    writeFileSync(join(out, "keys", "root.json"), "{}");
+    expect(await exportTo(out)).toMatchSnapshot();
+    expect(existsSync(join(out, "profiles.json"))).toBe(false);
+  });
+
+  it("refuses an export password equal to the keystore password, or none without a terminal", async () => {
+    expect(await exportTo(out, { ...env, MANTLE_AA_EXPORT_PASSWORD: PASSWORD })).toMatchSnapshot();
+    expect(await exportTo(out, env)).toMatchSnapshot();
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it("needs --agent and --out", async () => {
+    expect((await snap(["session", "export", "--agent", "bot"])).code).toBe(1);
+    expect((await snap(["session", "export", "--out", out])).code).toBe(1);
   });
 });
 

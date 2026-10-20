@@ -1,0 +1,95 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`session export: an agent-only home on a Mantle Sepolia fork > every account and session management command fails there with a usage error (1) 1`] = `
+{
+  "account exec": {
+    "exitCode": 1,
+    "message": "no root profile: create one with keys new or keys import",
+  },
+  "account init": {
+    "exitCode": 1,
+    "message": "no root profile: create one with keys new or keys import",
+  },
+  "account panic": {
+    "exitCode": 1,
+    "message": "no root profile: create one with keys new or keys import",
+  },
+  "account status": {
+    "exitCode": 1,
+    "message": "no root profile: create one with keys new or keys import",
+  },
+  "session export": {
+    "exitCode": 1,
+    "message": "no root profile for account <address>: create one with keys new or keys import",
+  },
+  "session grant": {
+    "exitCode": 1,
+    "message": "no root profile: create one with keys new or keys import",
+  },
+  "session list": {
+    "exitCode": 1,
+    "message": "no root profile: create one with keys new or keys import",
+  },
+  "session revoke": {
+    "exitCode": 1,
+    "message": "no root profile for account <address>: create one with keys new or keys import",
+  },
+  "session update": {
+    "exitCode": 1,
+    "message": "no root profile for account <address>: create one with keys new or keys import",
+  },
+}
+`;
+
+exports[`session export: an agent-only home on a Mantle Sepolia fork > refuses --out with a root profile, a non-agent --agent and a revoked key 1`] = `
+{
+  "--agent is a root profile": {
+    "error": {
+      "code": "USAGE",
+      "message": "profile root is not an agent profile",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+  },
+  "--agent is unknown": {
+    "error": {
+      "code": "USAGE",
+      "message": "no profile "ghost"",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+  },
+  "--out holds a root profile": {
+    "error": {
+      "code": "USAGE",
+      "message": "<home>/.mantle-aa holds a root profile or a key of no agent profile; export into an agent-only home",
+      "type": "UsageError",
+    },
+    "exitCode": 1,
+  },
+  "a revoked key": {
+    "error": {
+      "code": "KEY_EXPIRED_OR_REVOKED",
+      "message": "Session key is not registered on the account",
+      "reason": "Session key is not registered on the account",
+      "type": "PolicyViolationError",
+    },
+    "exitCode": 13,
+  },
+}
+`;
+
+exports[`session export: an agent-only home on a Mantle Sepolia fork > writes a home with only the agent's key and profile, under the export password 1`] = `
+{
+  "command": "session export",
+  "ok": true,
+  "result": {
+    "account": "<address>",
+    "home": "<home>/.mantle-aa",
+    "keyHash": "<bytes32>",
+    "keyfile": "bot.json",
+    "profile": "bot",
+    "role": "agent",
+  },
+}
+`;

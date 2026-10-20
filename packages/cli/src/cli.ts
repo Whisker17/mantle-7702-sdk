@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
 import {
   type AddressBook,
@@ -11,10 +11,12 @@ import {
   getChain,
   type KeystoreOptions,
   loadDeployments,
+  loadKey,
   loadProfileSigner,
   MantleAccount,
   PASSWORD_ENV,
   type PanicResult,
+  PrivateKeySigner,
   type Profile,
   RelayerExecutor,
   readProfiles,
@@ -67,6 +69,8 @@ export const SPONSOR_URL_ENV = "MANTLE_AA_SPONSOR_URL";
 export const BUNDLER_URL_ENV = "MANTLE_AA_BUNDLER_URL";
 /** Overrides the keystore and profile directory `~/.mantle-aa`. */
 export const HOME_ENV = "MANTLE_AA_HOME";
+/** The password `session export` encrypts the exported key with. */
+export const EXPORT_PASSWORD_ENV = "MANTLE_AA_EXPORT_PASSWORD";
 
 export interface CliIO {
   /** Defaults to `process.env`. */
@@ -117,6 +121,9 @@ const USAGE = `usage: mantle-aa <command> [options]
   session update   --agent <name> --policy <policy.json>
   session revoke   --agent <name>
   session list     [--root <name>]
+  session export   --agent <name> --out <dir> [--root <name>]
+                   (writes a home holding only that agent's key and profile, encrypted with
+                   ${EXPORT_PASSWORD_ENV}; for the agent's own MANTLE_AA_HOME)
   agent simulate   --agent <name> --calls <json>
   agent exec       --agent <name> --calls <json> [--via relayer|bundler]
   sponsor serve    --config <sponsor.yaml>
@@ -128,6 +135,7 @@ options:  --json  --rpc-url <url>  --sponsor-url <url>
           (--via: the path account init|exec|panic, session grant|update|revoke and agent
           exec submit through; default relayer. --via bundler needs a bundler URL.)
 env:      ${RPC_URL_ENV}, ${SPONSOR_URL_ENV}, ${BUNDLER_URL_ENV}, ${PASSWORD_ENV}, ${HOME_ENV},
+          ${EXPORT_PASSWORD_ENV} (session export),
           ${EMBEDDED_SWITCH_ENV}=1 with MANTLE_AA_RELAYER_KEY (embedded sponsor),
           and ${EMBEDDED_PAYMASTER_SIGNER_KEY_ENV} for --via bundler
 exit:     0 ok, 10 policy, 11 limit, 12 inventory, 13 key expired/revoked,
@@ -195,18 +203,22 @@ class Context {
   }
 
   async #passwordOf(confirm: boolean): Promise<string> {
-    this.#password ??= this.env[PASSWORD_ENV] || undefined;
-    if (this.#password) return this.#password;
+    this.#password ??= await this.secret(PASSWORD_ENV, "keystore password", confirm);
+    return this.#password;
+  }
+
+  /** A password from `envName`, else a hidden TTY prompt (`confirm`: asked twice). */
+  async secret(envName: string, what: string, confirm: boolean): Promise<string> {
+    const fromEnv = this.env[envName];
+    if (fromEnv) return fromEnv;
     const stdin = this.io.stdin;
-    if (!stdin?.isTTY) {
-      throw new UsageError(`no keystore password: set ${PASSWORD_ENV} or run in a terminal`);
-    }
-    const password = await promptHidden(stdin, this.io.stderr, "Keystore password: ");
-    if (!password) throw new UsageError("empty keystore password");
+    if (!stdin?.isTTY) throw new UsageError(`no ${what}: set ${envName} or run in a terminal`);
+    const label = `${what[0]?.toUpperCase()}${what.slice(1)}: `;
+    const password = await promptHidden(stdin, this.io.stderr, label);
+    if (!password) throw new UsageError(`empty ${what}`);
     if (confirm && (await promptHidden(stdin, this.io.stderr, "Repeat password: ")) !== password) {
       throw new UsageError("the passwords do not match");
     }
-    this.#password = password;
     return password;
   }
 
@@ -595,6 +607,64 @@ export const COMMANDS: Record<string, Command> = {
     async run(ctx) {
       const account = await mantleAccount(ctx, rootProfile(ctx, await ctx.keystore()), false);
       return { account: account.address, sessions: await account.listSessions() };
+    },
+  },
+  "session export": {
+    options: { ...ROOT, ...AGENT, out: { type: "string" } },
+    async run(ctx, v) {
+      const agent = required(v, "agent");
+      const out = resolve(required(v, "out"));
+      const options = await ctx.keystore();
+      const profile = agentProfile(options, agent);
+      // Only the root's home exports: an exported home has no root profile, so it cannot re-export.
+      rootProfile(ctx, options, getAddress(profile.account));
+      const target: KeystoreOptions = {
+        home: out,
+        ...(ctx.io.scrypt && { scrypt: ctx.io.scrypt }),
+      };
+      const existing = readProfiles(target);
+      // Every key the target holds must be one of its agent profiles' (any other may be a root key).
+      const agentKeys = new Set(
+        Object.values(existing)
+          .filter((p) => p.role === "agent")
+          .map((p) => p.keyfile),
+      );
+      const keysDir = join(out, "keys");
+      const strays = existsSync(keysDir)
+        ? readdirSync(keysDir).filter((f) => !agentKeys.has(f))
+        : [];
+      if (Object.values(existing).some((p) => p.role !== "agent") || strays.length) {
+        throw new UsageError(
+          `${out} holds a root profile or a key of no agent profile; export into an agent-only home`,
+        );
+      }
+      const source = await ctx.keystore(true);
+      const exportPassword = await ctx.secret(EXPORT_PASSWORD_ENV, "export password", true);
+      if (exportPassword === source.password) {
+        throw new UsageError("the export password must differ from the keystore password");
+      }
+      const privateKey = loadKey(profile.keyfile, source);
+      // Read-only: the checks agent simulate makes on the key (registered, unexpired, not revoked);
+      // the session also checks that the key is the profile's.
+      await new AgentSession({
+        client: ctx.client(),
+        account: profile.account,
+        keyHash: profile.keyHash,
+        signer: new PrivateKeySigner(privateKey),
+        addresses: ctx.addresses,
+      }).simulate([]);
+      const keyfile = `${agent}.json`;
+      // A re-export replaces this agent's key and profile only.
+      rmSync(join(keysDir, keyfile), { force: true });
+      saveKey(agent, privateKey, { ...target, password: exportPassword });
+      const exported: Profile = {
+        account: getAddress(profile.account),
+        keyHash: profile.keyHash,
+        keyfile,
+        role: "agent",
+      };
+      saveProfile(agent, exported, target);
+      return { home: out, profile: agent, ...exported };
     },
   },
   "agent simulate": {
