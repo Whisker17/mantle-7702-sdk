@@ -516,14 +516,14 @@ exports[`keys > new: refuses an existing profile name 1`] = `
 }
 `;
 
-exports[`session export before any chain access > refuses an --out that holds a root profile or a key of no agent profile 1`] = `
+exports[`session export before any chain access > refuses an --out that is not new, empty or an earlier export of the agent 1`] = `
 {
   "code": 1,
   "json": {
     "command": "session export",
     "error": {
       "code": "USAGE",
-      "message": "<home>/agent-home holds a root profile or a key of no agent profile; export into an agent-only home",
+      "message": "<home>/agent-home is neither new, empty nor an earlier export of bot; export into a new or empty directory",
       "type": "UsageError",
     },
     "exitCode": 1,

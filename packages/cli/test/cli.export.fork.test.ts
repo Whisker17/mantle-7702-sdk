@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decryptKeystore, loadDeployments, readProfiles } from "@0xwh1sker/mantle-aa-sdk";
 import { type Address, encodeFunctionData, erc20Abi, type Hex, toHex } from "viem";
@@ -134,6 +134,15 @@ describe.skipIf(!rpcUrl)("session export: an agent-only home on a Mantle Sepolia
     expect(privateKeyToAddress(agentKey).slice(2).toLowerCase()).toBe(keystore.address);
   }, 120_000);
 
+  // Before the agent runs: its embedded sponsor then keeps its ledger in that home, and an export
+  // replaces only a home that holds nothing but the agent's earlier export.
+  it("re-export replaces that one profile", async () => {
+    await s(["session", "export", "--agent", "bot", "--out", out], 0);
+    expect(Object.keys(readProfiles({ home: out }))).toEqual(["bot"]);
+    expect(readdirSync(join(out, "keys"))).toEqual(["bot.json"]);
+    expect(decrypts(join(out, "keys", "bot.json"), EXPORT_PASSWORD) === agentKey).toBe(true);
+  }, 60_000);
+
   it("agent simulate and agent exec succeed from the exported home", async () => {
     await a(["agent", "simulate", "--agent", "bot", "--calls", approve(42n)], 0);
     const exec = await a(["agent", "exec", "--agent", "bot", "--calls", approve(42n)], 0);
@@ -169,28 +178,23 @@ describe.skipIf(!rpcUrl)("session export: an agent-only home on a Mantle Sepolia
     expect(normalize(shown, agentDir)).toMatchSnapshot();
   }, 120_000);
 
-  it("re-export replaces that one profile", async () => {
-    await s(["session", "export", "--agent", "bot", "--out", out], 0);
-    expect(Object.keys(readProfiles({ home: out }))).toEqual(["bot"]);
-    expect(readdirSync(join(out, "keys"))).toEqual(["bot.json"]);
-    expect(decrypts(join(out, "keys", "bot.json"), EXPORT_PASSWORD) === agentKey).toBe(true);
-  }, 60_000);
-
-  it("refuses --out with a root profile, a non-agent --agent and a revoked key", async () => {
+  it("refuses --out in the root's home, a non-agent --agent and a revoked key", async () => {
     const before = readFileSync(join(out, "keys", "bot.json"), "utf8");
     const refusals: Record<string, unknown> = {};
     const refuse = async (what: string, args: string[], code: number) => {
       const r = await s(["session", "export", ...args], code);
       refusals[what] = normalize({ exitCode: r.code, error: r.json.error }, home);
     };
-    await refuse("--out holds a root profile", ["--agent", "bot", "--out", rootHome], 1);
+    await refuse("--out is the root's home", ["--agent", "bot", "--out", rootHome], 1);
     await refuse("--agent is a root profile", ["--agent", "root", "--out", out], 1);
     await refuse("--agent is unknown", ["--agent", "ghost", "--out", out], 1);
 
     await s(["session", "grant", "--agent", "gone", "--policy", policyFile], 0);
     await s(["session", "revoke", "--agent", "gone"], 0);
-    await refuse("a revoked key", ["--agent", "gone", "--out", out], 13);
+    const goneOut = join(agentDir, "gone");
+    await refuse("a revoked key", ["--agent", "gone", "--out", goneOut], 13);
     expect(refusals).toMatchSnapshot();
+    expect(existsSync(goneOut)).toBe(false);
 
     // Nothing was written: the agent's home is unchanged, and the root's still holds its root.
     expect(Object.keys(readProfiles({ home: out }))).toEqual(["bot"]);

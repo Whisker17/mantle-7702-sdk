@@ -215,7 +215,7 @@ describe("session export before any chain access", () => {
       return { code: r.code, json: normalize(r.json, home) };
     });
 
-  it("refuses an --out that holds a root profile or a key of no agent profile", async () => {
+  it("refuses an --out that is not new, empty or an earlier export of the agent", async () => {
     mkdirSync(join(out, "keys"), { recursive: true });
     writeFileSync(join(out, "keys", "root.json"), "{}");
     expect(await exportTo(out)).toMatchSnapshot();

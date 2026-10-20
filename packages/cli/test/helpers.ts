@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import type { ScryptParams } from "@0xwh1sker/mantle-aa-sdk";
 import { run } from "../src/index.js";
 
 export const PASSWORD = "cli-test-password";
@@ -31,7 +32,13 @@ export async function cli(
   args: string[],
   env: NodeJS.ProcessEnv,
   /** `defaultScrypt`: keystores this run writes pay geth's cost, as outside the tests. */
-  options: { stdin?: string; signal?: AbortSignal; json?: boolean; defaultScrypt?: boolean } = {},
+  options: {
+    stdin?: string;
+    signal?: AbortSignal;
+    json?: boolean;
+    defaultScrypt?: boolean;
+    scrypt?: ScryptParams;
+  } = {},
 ): Promise<CliResult> {
   let stdout = "";
   let stderr = "";
@@ -44,7 +51,7 @@ export async function cli(
       stderr += t;
     },
     stdin: Readable.from([options.stdin ?? ""]),
-    ...(!options.defaultScrypt && { scrypt: SCRYPT }),
+    ...(!options.defaultScrypt && { scrypt: options.scrypt ?? SCRYPT }),
     ...(options.signal && { signal: options.signal }),
   });
   const line = stdout.trim().split("\n")[0];

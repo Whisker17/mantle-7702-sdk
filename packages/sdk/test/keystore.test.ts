@@ -1,4 +1,11 @@
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zeroHash } from "viem";
@@ -160,6 +167,19 @@ describe("keystore files and profiles", () => {
     expect(() => loadProfileSigner("a", opts)).toThrow(/does not match/);
     expect(() => loadProfileSigner("r", opts)).toThrow(/does not match/);
     expect(() => getProfile("missing", opts)).toThrow(/No profile/);
+  });
+
+  it("never writes profiles through a link planted at the old temporary name", () => {
+    const victim = join(home, "victim");
+    writeFileSync(victim, "the root's file");
+    symlinkSync(victim, join(home, "profiles.json.tmp"));
+    const account = privateKeyToAddress(generatePrivateKey());
+    const root = { account, keyHash: zeroHash, keyfile: "r.json", role: "root" } as const;
+    saveProfile("r", root, { home });
+    saveProfile("s", root, { home });
+    expect(readFileSync(victim, "utf8")).toBe("the root's file");
+    expect(readProfiles({ home })).toEqual({ r: root, s: root });
+    expect(readdirSync(home).sort()).toEqual(["profiles.json", "profiles.json.tmp", "victim"]);
   });
 
   it("computes Calibur's secp256k1 keyHash", () => {

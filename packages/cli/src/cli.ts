@@ -1,6 +1,16 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
 import {
   type AddressBook,
@@ -384,6 +394,68 @@ function archiveProfile(options: KeystoreOptions, agent: string): string | undef
   return `${agent}.v${n}`;
 }
 
+/** `path` with its existing part resolved through links (and, on macOS, case). */
+function canonical(path: string): string {
+  const missing: string[] = [];
+  for (let p = resolve(path); ; p = dirname(p)) {
+    try {
+      return join(realpathSync.native(p), ...missing);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || p === dirname(p)) throw error;
+      missing.unshift(basename(p));
+    }
+  }
+}
+
+/** Whether one of `a` and `b` is, or lies inside, the other. */
+function overlaps(a: string, b: string): boolean {
+  const inside = (path: string, dir: string) => {
+    const rel = relative(dir, path);
+    return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  };
+  const [x, y] = [canonical(a), canonical(b)];
+  return inside(x, y) || inside(y, x);
+}
+
+/**
+ * Whether `session export` may replace `dir`: it does not exist, is an empty directory, or is
+ * exactly an earlier export of `agent` of `account` (`profiles.json` with that one profile,
+ * `keys/<agent>.json`, nothing else and no links).
+ */
+function exportable(dir: string, agent: string, account: Address): boolean {
+  try {
+    if (!lstatSync(dir).isDirectory()) return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+  const entries = readdirSync(dir).sort();
+  if (!entries.length) return true;
+  const keyfile = `${agent}.json`;
+  const is = (path: string, kind: "isFile" | "isDirectory") => lstatSync(path)[kind]();
+  if (
+    entries.join("/") !== "keys/profiles.json" ||
+    !is(join(dir, "profiles.json"), "isFile") ||
+    !is(join(dir, "keys"), "isDirectory") ||
+    readdirSync(join(dir, "keys")).join("/") !== keyfile ||
+    !is(join(dir, "keys", keyfile), "isFile")
+  ) {
+    return false;
+  }
+  try {
+    const profiles = readProfiles({ home: dir });
+    const only = profiles[agent];
+    return (
+      Object.keys(profiles).length === 1 &&
+      only?.role === "agent" &&
+      only.keyfile === keyfile &&
+      getAddress(only.account) === account
+    );
+  } catch {
+    return false; // not a profile file
+  }
+}
+
 const grantOutput = (grant: SessionGrant, previous: string | undefined) => ({
   profile: grant.agentName,
   keyHash: grant.keyHash,
@@ -618,24 +690,12 @@ export const COMMANDS: Record<string, Command> = {
       const profile = agentProfile(options, agent);
       // Only the root's home exports: an exported home has no root profile, so it cannot re-export.
       rootProfile(ctx, options, getAddress(profile.account));
-      const target: KeystoreOptions = {
-        home: out,
-        ...(ctx.io.scrypt && { scrypt: ctx.io.scrypt }),
-      };
-      const existing = readProfiles(target);
-      // Every key the target holds must be one of its agent profiles' (any other may be a root key).
-      const agentKeys = new Set(
-        Object.values(existing)
-          .filter((p) => p.role === "agent")
-          .map((p) => p.keyfile),
-      );
-      const keysDir = join(out, "keys");
-      const strays = existsSync(keysDir)
-        ? readdirSync(keysDir).filter((f) => !agentKeys.has(f))
-        : [];
-      if (Object.values(existing).some((p) => p.role !== "agent") || strays.length) {
+      if (overlaps(out, ctx.home)) {
+        throw new UsageError(`${out} is, holds or lies inside the root's home; export outside it`);
+      }
+      if (!exportable(out, agent, getAddress(profile.account))) {
         throw new UsageError(
-          `${out} holds a root profile or a key of no agent profile; export into an agent-only home`,
+          `${out} is neither new, empty nor an earlier export of ${agent}; export into a new or empty directory`,
         );
       }
       const source = await ctx.keystore(true);
@@ -654,16 +714,31 @@ export const COMMANDS: Record<string, Command> = {
         addresses: ctx.addresses,
       }).simulate([]);
       const keyfile = `${agent}.json`;
-      // A re-export replaces this agent's key and profile only.
-      rmSync(join(keysDir, keyfile), { force: true });
-      saveKey(agent, privateKey, { ...target, password: exportPassword });
       const exported: Profile = {
         account: getAddress(profile.account),
         keyHash: profile.keyHash,
         keyfile,
         role: "agent",
       };
-      saveProfile(agent, exported, target);
+      // Built in a private directory beside --out, then swapped in: the destination's contents are
+      // never written to, and a failure leaves the earlier export (or nothing) in place.
+      mkdirSync(dirname(out), { recursive: true, mode: 0o700 });
+      const staging = mkdtempSync(join(dirname(out), `.${basename(out)}-`));
+      const built = join(staging, "home");
+      const previous = join(staging, "previous");
+      try {
+        const scrypt = ctx.io.scrypt && { scrypt: ctx.io.scrypt };
+        saveKey(agent, privateKey, { home: built, password: exportPassword, ...scrypt });
+        saveProfile(agent, exported, { home: built });
+        if (existsSync(out)) renameSync(out, previous);
+        renameSync(built, out);
+      } catch (error) {
+        // Not removed when the earlier export cannot be put back: it stays in `staging`.
+        if (existsSync(previous)) renameSync(previous, out);
+        rmSync(staging, { recursive: true, force: true });
+        throw error;
+      }
+      rmSync(staging, { recursive: true, force: true });
       return { home: out, profile: agent, ...exported };
     },
   },
