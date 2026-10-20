@@ -82,9 +82,12 @@ relayer and 1.62 M self-paid. The Mantle Sepolia block gas limit is 60 M
   process: `<dir>/keys/<name>.json`, the session key re-encrypted under the export password, and
   `<dir>/profiles.json` with only the agent profile `<name>`. No root key, no root profile, and the
   root's password does not open it. The export password must differ from the keystore password.
-  It refuses an `--out` that holds a root profile or any key no agent profile there names, a
-  profile that is not an agent's (exit 1), and a key that is revoked or expired on chain (exit
-  13, a read-only check). Exporting again into the same home replaces that one profile and key.
+  `--out` must be new, an empty directory, or exactly an earlier export of that agent (its one
+  profile and key, nothing else, no links); it must not be, hold or lie inside the root's home.
+  The home is built in a private directory beside `--out` and then moved into place, so exporting
+  again replaces that earlier export as a whole, and a failed export leaves it as it was. It
+  refuses any other `--out`, a profile that is not an agent's (exit 1), and a key that is revoked
+  or expired on chain (exit 13, a read-only check).
 
 Hand-off: the root exports, then runs the agent with only that home and that password; nothing
 of the root's reaches the agent's process.

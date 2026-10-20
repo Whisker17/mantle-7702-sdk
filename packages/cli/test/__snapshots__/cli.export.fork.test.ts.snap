@@ -41,7 +41,7 @@ exports[`session export: an agent-only home on a Mantle Sepolia fork > every acc
 }
 `;
 
-exports[`session export: an agent-only home on a Mantle Sepolia fork > refuses --out with a root profile, a non-agent --agent and a revoked key 1`] = `
+exports[`session export: an agent-only home on a Mantle Sepolia fork > refuses --out in the root's home, a non-agent --agent and a revoked key 1`] = `
 {
   "--agent is a root profile": {
     "error": {
@@ -59,10 +59,10 @@ exports[`session export: an agent-only home on a Mantle Sepolia fork > refuses -
     },
     "exitCode": 1,
   },
-  "--out holds a root profile": {
+  "--out is the root's home": {
     "error": {
       "code": "USAGE",
-      "message": "<home>/.mantle-aa holds a root profile or a key of no agent profile; export into an agent-only home",
+      "message": "<home>/.mantle-aa is, holds or lies inside the root's home; export outside it",
       "type": "UsageError",
     },
     "exitCode": 1,

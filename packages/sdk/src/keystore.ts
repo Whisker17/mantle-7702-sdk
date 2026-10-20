@@ -7,7 +7,7 @@ import {
   scryptSync,
   timingSafeEqual,
 } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import {
@@ -185,13 +185,22 @@ export function readProfiles(options: KeystoreOptions = {}): Record<string, Prof
   }
 }
 
-/** Adds or replaces one profile; the file is replaced atomically. */
+/**
+ * Adds or replaces one profile; the file is replaced atomically, through a new temporary file of
+ * an unpredictable name (never one that exists, so never through a link planted in the home).
+ */
 export function saveProfile(name: string, profile: Profile, options: KeystoreOptions = {}): void {
   const profiles = { ...readProfiles(options), [checkName(name)]: profile };
   const file = profilesFile(options);
   mkdirSync(homeDir(options), { recursive: true, mode: 0o700 });
-  writeFileSync(`${file}.tmp`, `${JSON.stringify(profiles, null, 2)}\n`, { mode: 0o600 });
-  renameSync(`${file}.tmp`, file);
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tmp, `${JSON.stringify(profiles, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+    renameSync(tmp, file);
+  } catch (error) {
+    rmSync(tmp, { force: true });
+    throw error;
+  }
 }
 
 export function getProfile(name: string, options: KeystoreOptions = {}): Profile {
