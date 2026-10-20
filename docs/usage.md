@@ -35,6 +35,7 @@ The CLI reference (settings, profiles, `--json`, panic) is
 | `session revoke --agent <name>` | Remove the key from Calibur, tombstone it in the hook (it can never be granted again) and reset the allowances its policy allowed |
 | `account exec --calls <json> [--release <keyHash,token,amount>]…` | Any root batch. To dispose of meme that is attributed to a session (including a revoked one), name the release explicitly: `--release <keyHash>,<token>,<amount>` adds `releaseInventory` to the same batch. Meme no session holds needs no release |
 | `account panic [--self-pay [--undelegate]]` | Revoke every session in one transaction ([details](../packages/cli/README.md#panic)). `--self-pay` needs no sponsor but MNT on the root; `--undelegate` needs `--self-pay` |
+| `session export --agent <name> --out <dir>` | Write an agent-only home: that session's key under its own password (`MANTLE_AA_EXPORT_PASSWORD`, else a prompt) and its profile, nothing of the root's. Refuses a revoked or expired key (exit 13) and an `--out` that is neither new, empty nor that agent's earlier export, or that is, holds or lies inside the root's home, or whose parent directories someone other than you or root can change (exit 1). A replaced export that cannot be deleted is named as `leftover` with a warning (exit 0). [Hand-off and rules](../packages/cli/README.md#keys-and-profiles) |
 | `account status` / `session list` | Read-only: the state, nonces, every session with its policy, remaining limits and inventory, and the account's attributed and unallocated meme |
 
 Up to 8 sessions can be active per account. Grant a session with a custom expiry through the SDK
@@ -325,6 +326,13 @@ What the promise is, and what it is not (`docs/DESIGN.md` §4.0): a compromised 
 at most its quote-asset and MNT limits, measured at cost; it can sell only what it bought; it
 cannot change a policy, sign for the account (ERC-1271) or come back after a revoke. It can still
 sell its own positions at any price.
+
+Run your agent with a home that holds only its session key. The root runs
+`session export --agent <name> --out <dir>` with the agent's own password in
+`MANTLE_AA_EXPORT_PASSWORD`; the agent process gets `MANTLE_AA_HOME=<dir>` and that password as
+`MANTLE_AA_KEYSTORE_PASSWORD`, never the root's home or password. There `agent simulate|exec`
+work unchanged and every `account` / `session` command is a usage error. Grants, updates and
+revokes stay with the root, in its own home; after a new grant (a new key), export again.
 
 ## Known limits
 

@@ -1,6 +1,18 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
 import {
   type AddressBook,
@@ -11,10 +23,12 @@ import {
   getChain,
   type KeystoreOptions,
   loadDeployments,
+  loadKey,
   loadProfileSigner,
   MantleAccount,
   PASSWORD_ENV,
   type PanicResult,
+  PrivateKeySigner,
   type Profile,
   RelayerExecutor,
   readProfiles,
@@ -67,6 +81,8 @@ export const SPONSOR_URL_ENV = "MANTLE_AA_SPONSOR_URL";
 export const BUNDLER_URL_ENV = "MANTLE_AA_BUNDLER_URL";
 /** Overrides the keystore and profile directory `~/.mantle-aa`. */
 export const HOME_ENV = "MANTLE_AA_HOME";
+/** The password `session export` encrypts the exported key with. */
+export const EXPORT_PASSWORD_ENV = "MANTLE_AA_EXPORT_PASSWORD";
 
 export interface CliIO {
   /** Defaults to `process.env`. */
@@ -117,6 +133,9 @@ const USAGE = `usage: mantle-aa <command> [options]
   session update   --agent <name> --policy <policy.json>
   session revoke   --agent <name>
   session list     [--root <name>]
+  session export   --agent <name> --out <dir> [--root <name>]
+                   (writes a home holding only that agent's key and profile, encrypted with
+                   ${EXPORT_PASSWORD_ENV}; for the agent's own MANTLE_AA_HOME)
   agent simulate   --agent <name> --calls <json>
   agent exec       --agent <name> --calls <json> [--via relayer|bundler]
   sponsor serve    --config <sponsor.yaml>
@@ -128,6 +147,7 @@ options:  --json  --rpc-url <url>  --sponsor-url <url>
           (--via: the path account init|exec|panic, session grant|update|revoke and agent
           exec submit through; default relayer. --via bundler needs a bundler URL.)
 env:      ${RPC_URL_ENV}, ${SPONSOR_URL_ENV}, ${BUNDLER_URL_ENV}, ${PASSWORD_ENV}, ${HOME_ENV},
+          ${EXPORT_PASSWORD_ENV} (session export),
           ${EMBEDDED_SWITCH_ENV}=1 with MANTLE_AA_RELAYER_KEY (embedded sponsor),
           and ${EMBEDDED_PAYMASTER_SIGNER_KEY_ENV} for --via bundler
 exit:     0 ok, 10 policy, 11 limit, 12 inventory, 13 key expired/revoked,
@@ -195,18 +215,22 @@ class Context {
   }
 
   async #passwordOf(confirm: boolean): Promise<string> {
-    this.#password ??= this.env[PASSWORD_ENV] || undefined;
-    if (this.#password) return this.#password;
+    this.#password ??= await this.secret(PASSWORD_ENV, "keystore password", confirm);
+    return this.#password;
+  }
+
+  /** A password from `envName`, else a hidden TTY prompt (`confirm`: asked twice). */
+  async secret(envName: string, what: string, confirm: boolean): Promise<string> {
+    const fromEnv = this.env[envName];
+    if (fromEnv) return fromEnv;
     const stdin = this.io.stdin;
-    if (!stdin?.isTTY) {
-      throw new UsageError(`no keystore password: set ${PASSWORD_ENV} or run in a terminal`);
-    }
-    const password = await promptHidden(stdin, this.io.stderr, "Keystore password: ");
-    if (!password) throw new UsageError("empty keystore password");
+    if (!stdin?.isTTY) throw new UsageError(`no ${what}: set ${envName} or run in a terminal`);
+    const label = `${what[0]?.toUpperCase()}${what.slice(1)}: `;
+    const password = await promptHidden(stdin, this.io.stderr, label);
+    if (!password) throw new UsageError(`empty ${what}`);
     if (confirm && (await promptHidden(stdin, this.io.stderr, "Repeat password: ")) !== password) {
       throw new UsageError("the passwords do not match");
     }
-    this.#password = password;
     return password;
   }
 
@@ -370,6 +394,97 @@ function archiveProfile(options: KeystoreOptions, agent: string): string | undef
   while (profiles[`${agent}.v${n}`]) n++;
   saveProfile(`${agent}.v${n}`, current, options);
   return `${agent}.v${n}`;
+}
+
+/** `path` with its existing part resolved through links (and, on macOS, case). */
+function canonical(path: string): string {
+  const missing: string[] = [];
+  for (let p = resolve(path); ; p = dirname(p)) {
+    try {
+      return join(realpathSync.native(p), ...missing);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || p === dirname(p)) throw error;
+      missing.unshift(basename(p));
+    }
+  }
+}
+
+/** Whether one of `a` and `b` is, or lies inside, the other. */
+function overlaps(a: string, b: string): boolean {
+  const inside = (path: string, dir: string) => {
+    const rel = relative(dir, path);
+    return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  };
+  const [x, y] = [canonical(a), canonical(b)];
+  return inside(x, y) || inside(y, x);
+}
+
+/**
+ * `out` as its canonical parent and its name. Refused when another user could change that parent:
+ * an existing directory on its path not owned by the user or root, or group or world writable
+ * without the sticky bit (as /tmp, whose other users cannot rename or delete what they do not own).
+ * The pinned path then stays where it was validated, whatever links led to it.
+ */
+function pinned(out: string): string {
+  const parent = canonical(dirname(out));
+  const uid = process.getuid?.();
+  for (let p = parent; uid !== undefined; p = dirname(p)) {
+    const stat = statSync(p, { throwIfNoEntry: false });
+    if (
+      stat &&
+      ((stat.uid !== uid && stat.uid !== 0) || (stat.mode & 0o022 && !(stat.mode & 0o1000)))
+    ) {
+      throw new UsageError(
+        `${p} can be changed by another user; export under directories only you or root can change`,
+      );
+    }
+    if (p === dirname(p)) break;
+  }
+  return join(parent, basename(out));
+}
+
+const notExportable = (out: string, agent: string) =>
+  new UsageError(
+    `${out} is neither new, empty nor an earlier export of ${agent}; export into a new or empty directory`,
+  );
+
+/**
+ * Whether `session export` may replace `dir`: it does not exist, is an empty directory, or is
+ * exactly an earlier export of `agent` of `account` (`profiles.json` with that one profile,
+ * `keys/<agent>.json`, nothing else and no links).
+ */
+function exportable(dir: string, agent: string, account: Address): boolean {
+  try {
+    if (!lstatSync(dir).isDirectory()) return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+  const entries = readdirSync(dir).sort();
+  if (!entries.length) return true;
+  const keyfile = `${agent}.json`;
+  const is = (path: string, kind: "isFile" | "isDirectory") => lstatSync(path)[kind]();
+  if (
+    entries.join("/") !== "keys/profiles.json" ||
+    !is(join(dir, "profiles.json"), "isFile") ||
+    !is(join(dir, "keys"), "isDirectory") ||
+    readdirSync(join(dir, "keys")).join("/") !== keyfile ||
+    !is(join(dir, "keys", keyfile), "isFile")
+  ) {
+    return false;
+  }
+  try {
+    const profiles = readProfiles({ home: dir });
+    const only = profiles[agent];
+    return (
+      Object.keys(profiles).length === 1 &&
+      only?.role === "agent" &&
+      only.keyfile === keyfile &&
+      getAddress(only.account) === account
+    );
+  } catch {
+    return false; // not a profile file
+  }
 }
 
 const grantOutput = (grant: SessionGrant, previous: string | undefined) => ({
@@ -595,6 +710,100 @@ export const COMMANDS: Record<string, Command> = {
     async run(ctx) {
       const account = await mantleAccount(ctx, rootProfile(ctx, await ctx.keystore()), false);
       return { account: account.address, sessions: await account.listSessions() };
+    },
+  },
+  "session export": {
+    options: { ...ROOT, ...AGENT, out: { type: "string" } },
+    async run(ctx, v) {
+      const agent = required(v, "agent");
+      const out = resolve(required(v, "out"));
+      const options = await ctx.keystore();
+      const profile = agentProfile(options, agent);
+      const account = getAddress(profile.account);
+      // Only the root's home exports: an exported home has no root profile, so it cannot re-export.
+      rootProfile(ctx, options, account);
+      // Every check and change below is on `dest`, never on --out's links.
+      const dest = pinned(out);
+      if (overlaps(dest, ctx.home)) {
+        throw new UsageError(`${out} is, holds or lies inside the root's home; export outside it`);
+      }
+      if (!exportable(dest, agent, account)) throw notExportable(out, agent);
+      const source = await ctx.keystore(true);
+      const exportPassword = await ctx.secret(EXPORT_PASSWORD_ENV, "export password", true);
+      if (exportPassword === source.password) {
+        throw new UsageError("the export password must differ from the keystore password");
+      }
+      const privateKey = loadKey(profile.keyfile, source);
+      // Read-only: the checks agent simulate makes on the key (registered, unexpired, not revoked);
+      // the session also checks that the key is the profile's.
+      await new AgentSession({
+        client: ctx.client(),
+        account: profile.account,
+        keyHash: profile.keyHash,
+        signer: new PrivateKeySigner(privateKey),
+        addresses: ctx.addresses,
+      }).simulate([]);
+      const keyfile = `${agent}.json`;
+      const exported: Profile = { account, keyHash: profile.keyHash, keyfile, role: "agent" };
+      // The directories it creates are pinned again: none of them was there to check before.
+      const parent = dirname(dest);
+      mkdirSync(parent, { recursive: true, mode: 0o700 });
+      if (pinned(dest) !== dest)
+        throw new UsageError(`${out}'s parent changed; nothing was written`);
+      // One export into `dest` at a time; an interrupted one leaves its lock for the user to remove.
+      const lock = join(parent, `.${basename(dest)}.lock`);
+      try {
+        writeFileSync(lock, "", { flag: "wx", mode: 0o600 });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        throw new UsageError(
+          `${lock} exists: another export into ${out} is running, or one was interrupted; remove it once none is`,
+        );
+      }
+      try {
+        // Built in a private directory beside `dest`. The destination is moved in there whole and
+        // checked again, so what changed in it since the check above is refused, not replaced.
+        const staging = mkdtempSync(join(parent, `.${basename(dest)}-`));
+        const built = join(staging, "home");
+        const previous = join(staging, "previous");
+        let moved = false;
+        try {
+          const scrypt = ctx.io.scrypt && { scrypt: ctx.io.scrypt };
+          saveKey(agent, privateKey, { home: built, password: exportPassword, ...scrypt });
+          saveProfile(agent, exported, { home: built });
+          try {
+            renameSync(dest, previous);
+            moved = true;
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+          if (moved && !exportable(previous, agent, account)) throw notExportable(out, agent);
+          // The commit point: before it a failure leaves the destination as it was; after it the
+          // export succeeded.
+          renameSync(built, dest);
+        } catch (error) {
+          if (moved) {
+            try {
+              renameSync(previous, dest);
+            } catch {
+              throw new Error(
+                `${(error as Error).message}; the earlier export is kept in ${previous}`,
+              );
+            }
+          }
+          rmSync(staging, { recursive: true, force: true });
+          throw error;
+        }
+        try {
+          rmSync(staging, { recursive: true, force: true });
+        } catch {
+          ctx.io.stderr(`warning: exported; remove the export it replaced, left in ${staging}\n`);
+          return { home: dest, profile: agent, ...exported, leftover: staging };
+        }
+        return { home: dest, profile: agent, ...exported };
+      } finally {
+        rmSync(lock, { force: true });
+      }
     },
   },
   "agent simulate": {
