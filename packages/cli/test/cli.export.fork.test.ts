@@ -1,4 +1,11 @@
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { decryptKeystore, loadDeployments, readProfiles } from "@0xwh1sker/mantle-aa-sdk";
 import { type Address, encodeFunctionData, erc20Abi, type Hex, toHex } from "viem";
@@ -57,7 +64,8 @@ describe.skipIf(!rpcUrl)("session export: an agent-only home on a Mantle Sepolia
     MANTLE_AA_EXPORT_PASSWORD: EXPORT_PASSWORD,
   });
   const rootHome = env.MANTLE_AA_HOME as string;
-  const agentDir = tempHome("mantle-aa-agent-");
+  // Canonical, as the home the export reports (macOS: /var -> /private/var).
+  const agentDir = realpathSync.native(tempHome("mantle-aa-agent-"));
   const out = join(agentDir, ".mantle-aa");
   // The agent's environment: its home and its password, never the root's.
   const agentEnv = testEnv(agentDir, {

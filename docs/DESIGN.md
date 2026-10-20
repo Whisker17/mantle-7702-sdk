@@ -573,6 +573,7 @@ local relayer key; tests and local demos only.
   every grant creates a new key and a new profile version.
 - `session export` writes an agent-only home: one session key, re-encrypted under its own
   password (`MANTLE_AA_EXPORT_PASSWORD`), and its agent profile, with no root key or root profile.
+  Destination and trust rules: `packages/cli/README.md` § Keys and profiles.
 
 ## 6. CLI
 
