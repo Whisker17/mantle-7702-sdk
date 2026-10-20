@@ -1,9 +1,12 @@
 import {
+  chmodSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -70,7 +73,7 @@ const exportTo = async (name: string, dir: string, password = EXPORT_PASSWORD, s
   for (const secret of [PASSWORD, password, ...Object.values(keys).map((k) => k.slice(2))]) {
     expect(r.stdout + r.stderr).not.toContain(secret);
   }
-  return { code: r.code, json: normalize(r.json, home) };
+  return { code: r.code, json: normalize(r.json, home), stderr: r.stderr };
 };
 
 /** Every entry under `dir` (links unfollowed) with its bytes or link target. */
@@ -118,6 +121,7 @@ function expectExport(dir: string, name: string, password = EXPORT_PASSWORD) {
 
 const refused = (message: RegExp) => ({
   code: 1,
+  stderr: "",
   json: expect.objectContaining({
     error: expect.objectContaining({ code: "USAGE", message: expect.stringMatching(message) }),
   }),
@@ -126,7 +130,8 @@ const NOT_EXPORTABLE = /neither new, empty nor an earlier export of/;
 const OVERLAPS = /is, holds or lies inside the root's home/;
 
 beforeEach(async () => {
-  home = tempHome();
+  // Canonical (macOS: /var -> /private/var), as the paths the export reports and renames onto.
+  home = realpathSync.native(tempHome());
   env = testEnv(home, { MANTLE_AA_RPC_URL: "http://127.0.0.1:1" });
   source = env.MANTLE_AA_HOME as string;
   expect((await cli(["keys", "new", "--name", "root"], env)).code).toBe(0);
@@ -265,5 +270,116 @@ describe("session export: the destination", () => {
     fault.renameTo = out;
     expect((await exportTo("bot", out, "a-new-export-password")).code).toBe(1);
     intact();
+  });
+});
+
+// A change made while the export awaits its chain check, the window between validating the
+// destination and replacing it.
+describe("session export: a destination that changes during the export", () => {
+  /** Runs `change` inside the export's chain check. */
+  const during = (change: () => void) =>
+    vi.spyOn(AgentSession.prototype, "simulate").mockImplementation(async () => change());
+
+  it("a parent link retargeted at the source's parent: the source stays, the export lands where validated", async () => {
+    const safe = join(home, "safe");
+    mkdirSync(safe);
+    const link = join(home, "mutable-parent");
+    symlinkSync(safe, link);
+    const sourceBefore = tree(source);
+    during(() => {
+      rmSync(link);
+      symlinkSync(home, link);
+    });
+    const r = await exportTo("bot", join(link, ".mantle-aa"));
+    expect(tree(source)).toEqual(sourceBefore);
+    expect(r.code).toBe(0);
+    expect(r.json).toMatchObject({ result: { home: "<home>/safe/.mantle-aa" } });
+    expectExport(join(safe, ".mantle-aa"), "bot");
+    expect(readdirSync(home).sort()).toEqual([".mantle-aa", "mutable-parent", "safe"]);
+  });
+
+  it("a missing parent planted as a link to the source's parent: refused, nothing written", async () => {
+    const sourceBefore = tree(source);
+    during(() => symlinkSync(home, join(home, "sub")));
+    expect(await exportTo("bot", join(home, "sub", ".mantle-aa"))).toEqual(
+      refused(/parent changed; nothing was written/),
+    );
+    expect(tree(source)).toEqual(sourceBefore);
+    expect(readdirSync(home).sort()).toEqual([".mantle-aa", "sub"]);
+  });
+
+  it("a file added to an earlier export: refused at the swap, the file and the export stay", async () => {
+    expect((await exportTo("bot", out)).code).toBe(0);
+    during(() => writeFileSync(join(out, "notes.txt"), "the agent's"));
+    expect(await exportTo("bot", out, "a-new-export-password")).toEqual(refused(NOT_EXPORTABLE));
+    expect(readFileSync(join(out, "notes.txt"), "utf8")).toBe("the agent's");
+    rmSync(join(out, "notes.txt"));
+    expectExport(out, "bot");
+    expect(readdirSync(home).sort()).toEqual([".mantle-aa", "agent-home"]);
+  });
+
+  it("two agents exported to one new destination at once: one succeeds, the other is refused", async () => {
+    let waiting = 0;
+    let release = () => {};
+    const both = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(AgentSession.prototype, "simulate").mockImplementation(async () => {
+      if (++waiting === 2) release();
+      await both;
+    });
+    const results = await Promise.all([exportTo("bot", out), exportTo("eve", out)]);
+    expect(results.map((r) => r.code).sort()).toEqual([0, 1]);
+    const winner = results[0]?.code === 0 ? "bot" : "eve";
+    expect(results.find((r) => r.code)).toEqual(refused(NOT_EXPORTABLE));
+    expectExport(out, winner);
+    expect(readdirSync(home).sort()).toEqual([".mantle-aa", "agent-home"]);
+  });
+});
+
+describe("session export: the commit point", () => {
+  it("a replaced export that cannot be removed: exit 0, the new export live, a warning naming it", async () => {
+    expect((await exportTo("bot", out)).code).toBe(0);
+    chmodSync(join(out, "keys"), 0o500); // the agent's doing, between two exports
+    const r = await exportTo("bot", out, "a-new-export-password");
+    expect(r.code).toBe(0);
+    expectExport(out, "bot", "a-new-export-password");
+    const { leftover } = (r.json as { result: { leftover: string } }).result;
+    expect(leftover).toMatch(/^<home>\/\.agent-home-/);
+    expect(r.stderr).toContain(`warning: `);
+    expect(r.stderr).toContain(leftover.replace("<home>", home));
+    const kept = join(leftover.replace("<home>", home), "previous");
+    expect(opens(kept, "bot", EXPORT_PASSWORD), "the replaced export, kept").toBe(keys.bot);
+    chmodSync(join(kept, "keys"), 0o700);
+  });
+});
+
+describe("session export: who controls the parent", () => {
+  it("refuses a parent chain another user could change: group or world writable, not sticky", async () => {
+    const shared = join(home, "shared");
+    mkdirSync(shared);
+    for (const mode of [0o777, 0o775]) {
+      chmodSync(shared, mode);
+      expect(await exportTo("bot", join(shared, "sub", "agent-home"))).toEqual(
+        refused(/shared can be changed by another user/),
+      );
+      expect(readdirSync(shared)).toEqual([]);
+    }
+    // Sticky, as /tmp: others cannot rename or delete what they do not own.
+    chmodSync(shared, 0o1777);
+    expect((await exportTo("bot", join(shared, "sub", "agent-home"))).code).toBe(0);
+    expectExport(join(shared, "sub", "agent-home"), "bot");
+  });
+
+  it("serializes exporters: an export finding another's lock is refused and changes nothing", async () => {
+    expect((await exportTo("bot", out)).code).toBe(0);
+    const lock = join(home, ".agent-home.lock");
+    writeFileSync(lock, "");
+    const before = tree(home);
+    expect(await exportTo("bot", out, "a-new-export-password")).toEqual(
+      refused(/agent-home\.lock exists/),
+    );
+    expect(tree(home)).toEqual(before);
+    expect(existsSync(lock)).toBe(true);
   });
 });

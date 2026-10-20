@@ -8,6 +8,8 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -418,6 +420,35 @@ function overlaps(a: string, b: string): boolean {
 }
 
 /**
+ * `out` as its canonical parent and its name. Refused when another user could change that parent:
+ * an existing directory on its path not owned by the user or root, or group or world writable
+ * without the sticky bit (as /tmp, whose other users cannot rename or delete what they do not own).
+ * The pinned path then stays where it was validated, whatever links led to it.
+ */
+function pinned(out: string): string {
+  const parent = canonical(dirname(out));
+  const uid = process.getuid?.();
+  for (let p = parent; uid !== undefined; p = dirname(p)) {
+    const stat = statSync(p, { throwIfNoEntry: false });
+    if (
+      stat &&
+      ((stat.uid !== uid && stat.uid !== 0) || (stat.mode & 0o022 && !(stat.mode & 0o1000)))
+    ) {
+      throw new UsageError(
+        `${p} can be changed by another user; export under directories only you or root can change`,
+      );
+    }
+    if (p === dirname(p)) break;
+  }
+  return join(parent, basename(out));
+}
+
+const notExportable = (out: string, agent: string) =>
+  new UsageError(
+    `${out} is neither new, empty nor an earlier export of ${agent}; export into a new or empty directory`,
+  );
+
+/**
  * Whether `session export` may replace `dir`: it does not exist, is an empty directory, or is
  * exactly an earlier export of `agent` of `account` (`profiles.json` with that one profile,
  * `keys/<agent>.json`, nothing else and no links).
@@ -688,16 +719,15 @@ export const COMMANDS: Record<string, Command> = {
       const out = resolve(required(v, "out"));
       const options = await ctx.keystore();
       const profile = agentProfile(options, agent);
+      const account = getAddress(profile.account);
       // Only the root's home exports: an exported home has no root profile, so it cannot re-export.
-      rootProfile(ctx, options, getAddress(profile.account));
-      if (overlaps(out, ctx.home)) {
+      rootProfile(ctx, options, account);
+      // Every check and change below is on `dest`, never on --out's links.
+      const dest = pinned(out);
+      if (overlaps(dest, ctx.home)) {
         throw new UsageError(`${out} is, holds or lies inside the root's home; export outside it`);
       }
-      if (!exportable(out, agent, getAddress(profile.account))) {
-        throw new UsageError(
-          `${out} is neither new, empty nor an earlier export of ${agent}; export into a new or empty directory`,
-        );
-      }
+      if (!exportable(dest, agent, account)) throw notExportable(out, agent);
       const source = await ctx.keystore(true);
       const exportPassword = await ctx.secret(EXPORT_PASSWORD_ENV, "export password", true);
       if (exportPassword === source.password) {
@@ -714,32 +744,66 @@ export const COMMANDS: Record<string, Command> = {
         addresses: ctx.addresses,
       }).simulate([]);
       const keyfile = `${agent}.json`;
-      const exported: Profile = {
-        account: getAddress(profile.account),
-        keyHash: profile.keyHash,
-        keyfile,
-        role: "agent",
-      };
-      // Built in a private directory beside --out, then swapped in: the destination's contents are
-      // never written to, and a failure leaves the earlier export (or nothing) in place.
-      mkdirSync(dirname(out), { recursive: true, mode: 0o700 });
-      const staging = mkdtempSync(join(dirname(out), `.${basename(out)}-`));
-      const built = join(staging, "home");
-      const previous = join(staging, "previous");
+      const exported: Profile = { account, keyHash: profile.keyHash, keyfile, role: "agent" };
+      // The directories it creates are pinned again: none of them was there to check before.
+      const parent = dirname(dest);
+      mkdirSync(parent, { recursive: true, mode: 0o700 });
+      if (pinned(dest) !== dest)
+        throw new UsageError(`${out}'s parent changed; nothing was written`);
+      // One export into `dest` at a time; an interrupted one leaves its lock for the user to remove.
+      const lock = join(parent, `.${basename(dest)}.lock`);
       try {
-        const scrypt = ctx.io.scrypt && { scrypt: ctx.io.scrypt };
-        saveKey(agent, privateKey, { home: built, password: exportPassword, ...scrypt });
-        saveProfile(agent, exported, { home: built });
-        if (existsSync(out)) renameSync(out, previous);
-        renameSync(built, out);
+        writeFileSync(lock, "", { flag: "wx", mode: 0o600 });
       } catch (error) {
-        // Not removed when the earlier export cannot be put back: it stays in `staging`.
-        if (existsSync(previous)) renameSync(previous, out);
-        rmSync(staging, { recursive: true, force: true });
-        throw error;
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        throw new UsageError(
+          `${lock} exists: another export into ${out} is running, or one was interrupted; remove it once none is`,
+        );
       }
-      rmSync(staging, { recursive: true, force: true });
-      return { home: out, profile: agent, ...exported };
+      try {
+        // Built in a private directory beside `dest`. The destination is moved in there whole and
+        // checked again, so what changed in it since the check above is refused, not replaced.
+        const staging = mkdtempSync(join(parent, `.${basename(dest)}-`));
+        const built = join(staging, "home");
+        const previous = join(staging, "previous");
+        let moved = false;
+        try {
+          const scrypt = ctx.io.scrypt && { scrypt: ctx.io.scrypt };
+          saveKey(agent, privateKey, { home: built, password: exportPassword, ...scrypt });
+          saveProfile(agent, exported, { home: built });
+          try {
+            renameSync(dest, previous);
+            moved = true;
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+          if (moved && !exportable(previous, agent, account)) throw notExportable(out, agent);
+          // The commit point: before it a failure leaves the destination as it was; after it the
+          // export succeeded.
+          renameSync(built, dest);
+        } catch (error) {
+          if (moved) {
+            try {
+              renameSync(previous, dest);
+            } catch {
+              throw new Error(
+                `${(error as Error).message}; the earlier export is kept in ${previous}`,
+              );
+            }
+          }
+          rmSync(staging, { recursive: true, force: true });
+          throw error;
+        }
+        try {
+          rmSync(staging, { recursive: true, force: true });
+        } catch {
+          ctx.io.stderr(`warning: exported; remove the export it replaced, left in ${staging}\n`);
+          return { home: dest, profile: agent, ...exported, leftover: staging };
+        }
+        return { home: dest, profile: agent, ...exported };
+      } finally {
+        rmSync(lock, { force: true });
+      }
     },
   },
   "agent simulate": {
