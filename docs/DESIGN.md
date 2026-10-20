@@ -55,7 +55,7 @@ Core capabilities:
 | Q4 | Stack / delivery | Foundry + TypeScript (viem) + pnpm monorepo; SDK + CLI this iteration; machine-readable CLI first | viem supports 7702 / AA natively |
 | Q5 | Network | Mantle Sepolia; CI on anvil fork; mainnet out of scope | EntryPoint already on chain |
 | Q6/Q9 | Acceptance scope | Fully gasless flow + batch + buy/sell; no ERC20 gas payment | See §8 |
-| Q7 | Repository | Standalone repository; packages `private: true`, not published; the launchpad consumes them by git dependency or local link | — |
+| Q7 | Repository | Standalone repository. Originally the packages were `private: true` and not published, and the launchpad consumed them by git dependency or local link; **superseded in v0.1.4**: the three packages are published to npm (MIT) as `@0xwh1sker/mantle-aa-sdk`, `-sponsor` and `-cli`, and contributors on unreleased changes use pnpm `link:` dependencies on a built clone (`docs/usage.md` § Installing the packages) | — |
 | Q8 | Transport | Two paths: Calibur signed `execute` (relayer) + 4337 EntryPoint v0.8 (bundler); SDK `Executor` abstraction; both implemented this iteration | Relayer: low latency, independent of thin 4337 infrastructure; 4337: ecosystem compatibility |
 | Q10 | Sponsorship | Own sponsor service; rules in §5.2 | Shared by both paths |
 | Q11 | Policy scope | Target + selector allowlist, per-call value cap, quote-asset total / period caps, fixed-ABI parameter rules, expiry; concepts aligned with the 8130 actor/policy model | — |
@@ -106,9 +106,9 @@ mantle-7702-sdk/
 │  ├─ script/                         # CaliburEntry, Hook (address mining), Paymaster, mocks
 │  └─ test/                           # unit / fuzz / invariant / entry-point matrix
 ├─ packages/
-│  ├─ sdk/                    # @0xwh1sker/mantle-aa-sdk (private)
-│  ├─ cli/                    # @0xwh1sker/mantle-aa-cli (private)
-│  └─ sponsor/                # sponsor service
+│  ├─ sdk/                    # @0xwh1sker/mantle-aa-sdk
+│  ├─ cli/                    # @0xwh1sker/mantle-aa-cli
+│  └─ sponsor/                # @0xwh1sker/mantle-aa-sponsor (sponsor service)
 ├─ e2e/                       # anvil fork + Alto; Sepolia script
 ├─ deployments/               # mantle-sepolia.json
 └─ docs/
